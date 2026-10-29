@@ -34,13 +34,37 @@ pub enum Language {
 }
 
 /// O que acontece quando uma tecla mapeada é pressionada.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
     /// Age como outra tecla.
     Key { to: KeyCode },
     /// Não faz nada.
     Disabled,
+    /// Combinação de teclas (ex.: Ctrl+C), mantida enquanto a tecla estiver pressionada.
+    Shortcut { keys: Vec<KeyCode> },
+    /// Sequência de passos executada uma vez a cada toque.
+    Macro { steps: Vec<MacroStep> },
+    /// Digita um texto, independente do idioma do teclado.
+    Text { text: String },
+    /// Abre um programa, arquivo, pasta ou site.
+    Run {
+        command: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        args: String,
+    },
+}
+
+/// Um passo de macro, escrito como `{ "tap": "KeyA" }`, `{ "delay_ms": 100 }` etc.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MacroStep {
+    /// Aperta e solta.
+    Tap(KeyCode),
+    Down(KeyCode),
+    Up(KeyCode),
+    DelayMs(u32),
+    Text(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -87,6 +111,43 @@ mod tests {
             Action::Key { to: KeyCode::Escape }
         );
         assert_eq!(profile.mappings[&KeyCode::MetaLeft], Action::Disabled);
+    }
+
+    #[test]
+    fn parses_macro_actions() {
+        let json = r#"{
+            "name": "Macros",
+            "mappings": {
+                "F13": { "type": "shortcut", "keys": ["ControlLeft", "KeyC"] },
+                "F14": { "type": "macro", "steps": [
+                    { "down": "ShiftLeft" }, { "tap": "KeyA" }, { "up": "ShiftLeft" },
+                    { "delay_ms": 50 }, { "text": "olá" }
+                ] },
+                "F15": { "type": "text", "text": "Atenciosamente,\nGabriel" },
+                "F16": { "type": "run", "command": "notepad.exe" }
+            }
+        }"#;
+        let profile: Profile = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            profile.mappings[&KeyCode::F13],
+            Action::Shortcut { keys: vec![KeyCode::ControlLeft, KeyCode::KeyC] }
+        );
+        assert_eq!(
+            profile.mappings[&KeyCode::F14],
+            Action::Macro {
+                steps: vec![
+                    MacroStep::Down(KeyCode::ShiftLeft),
+                    MacroStep::Tap(KeyCode::KeyA),
+                    MacroStep::Up(KeyCode::ShiftLeft),
+                    MacroStep::DelayMs(50),
+                    MacroStep::Text("olá".into()),
+                ]
+            }
+        );
+        assert_eq!(
+            profile.mappings[&KeyCode::F16],
+            Action::Run { command: "notepad.exe".into(), args: String::new() }
+        );
     }
 
     #[test]

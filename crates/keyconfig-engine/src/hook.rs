@@ -2,44 +2,41 @@
 //!
 //! O callback roda na thread que instalou o hook, dentro do loop de mensagens,
 //! então o estado fica num `thread_local` sem precisar de locks. Ele precisa ser
-//! rápido: se demorar demais o Windows remove o hook sem avisar.
+//! rápido: se demorar demais o Windows remove o hook sem avisar. Por isso
+//! macros, textos e comandos vão para o [`worker`](crate::worker).
 
 use std::cell::RefCell;
-use std::mem::size_of;
 use std::ptr::{null, null_mut};
+use std::sync::Arc;
 
 use keyconfig_core::{Action, KeyCode, KeyOutput, Profile};
 use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
-    KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC,
-};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT,
     LLKHF_EXTENDED, LLKHF_INJECTED, LLKHF_UP, WH_KEYBOARD_LL,
 };
 
-/// Marca as teclas que nós mesmos enviamos, para o hook não processá-las de novo ("KCFG").
-const INJECT_TAG: usize = 0x4B43_4647;
+use crate::input::{self, INJECT_TAG};
+use crate::worker;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Held {
     Up,
     /// Foi pressionada sem mapeamento; a soltura também passa direto.
     Passed,
     /// Foi pressionada com este mapeamento; a soltura usa o mesmo, mesmo que o perfil mude.
-    Mapped(Action),
+    Mapped(Arc<Action>),
 }
 
 enum Decision {
     Pass,
     Block,
-    Send(KeyCode, bool),
+    Act(Arc<Action>, bool),
 }
 
 struct Engine {
-    mappings: Vec<Option<Action>>,
+    mappings: Vec<Option<Arc<Action>>>,
     held: Vec<Held>,
     by_scan: [Option<KeyCode>; 512],
     by_vk: [Option<KeyCode>; 256],
@@ -87,18 +84,22 @@ impl Engine {
             match std::mem::replace(&mut self.held[i], Held::Up) {
                 Held::Passed => return Decision::Pass,
                 Held::Mapped(action) => Some(action),
-                Held::Up => self.mappings[i],
+                Held::Up => self.mappings[i].clone(),
             }
         } else {
-            let action = self.mappings[i];
-            self.held[i] = action.map_or(Held::Passed, Held::Mapped);
+            let repeat = matches!(self.held[i], Held::Mapped(_));
+            let action = self.mappings[i].clone();
+            self.held[i] = action.clone().map_or(Held::Passed, Held::Mapped);
+            // Segurar a tecla gera repetições; só a troca simples de tecla deve repeti-las.
+            if repeat && action.as_deref().is_some_and(|a| !matches!(a, Action::Key { .. })) {
+                return Decision::Block;
+            }
             action
         };
 
         match action {
             None => Decision::Pass,
-            Some(Action::Disabled) => Decision::Block,
-            Some(Action::Key { to }) => Decision::Send(to, up),
+            Some(action) => Decision::Act(action, up),
         }
     }
 }
@@ -111,8 +112,8 @@ thread_local! {
 pub fn set_profile(profile: &Profile) {
     ENGINE.with_borrow_mut(|engine| {
         engine.mappings.iter_mut().for_each(|m| *m = None);
-        for (&key, &action) in &profile.mappings {
-            engine.mappings[key.index()] = Some(action);
+        for (&key, action) in &profile.mappings {
+            engine.mappings[key.index()] = Some(Arc::new(action.clone()));
         }
     });
 }
@@ -145,8 +146,8 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             match decision {
                 Decision::Pass => {}
                 Decision::Block => return 1,
-                Decision::Send(key, up) => {
-                    send_key(key, up);
+                Decision::Act(action, up) => {
+                    perform(action, up);
                     return 1;
                 }
             }
@@ -155,29 +156,23 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
     CallNextHookEx(null_mut(), code, wparam, lparam)
 }
 
-fn send_key(key: KeyCode, up: bool) {
-    let (vk, scan, mut flags) = match key.output() {
-        KeyOutput::Scan(s) => (0, s as u16, KEYEVENTF_SCANCODE),
-        KeyOutput::Ext(s) => (0, s as u16, KEYEVENTF_SCANCODE | KEYEVENTF_EXTENDEDKEY),
-        KeyOutput::Vk(v, ext) => {
-            let scan = unsafe { MapVirtualKeyW(v as u32, MAPVK_VK_TO_VSC) } as u16;
-            (v as u16, scan, if ext { KEYEVENTF_EXTENDEDKEY } else { 0 })
+fn perform(action: Arc<Action>, up: bool) {
+    match &*action {
+        Action::Key { to } => input::send(&[input::key(*to, up)]),
+        Action::Disabled => {}
+        // Aperta na ordem e solta na ordem inversa, como uma pessoa faria.
+        Action::Shortcut { keys } if up => {
+            let inputs: Vec<_> = keys.iter().rev().map(|&k| input::key(k, true)).collect();
+            input::send(&inputs);
         }
-    };
-    if up {
-        flags |= KEYEVENTF_KEYUP;
+        Action::Shortcut { keys } => {
+            let inputs: Vec<_> = keys.iter().map(|&k| input::key(k, false)).collect();
+            input::send(&inputs);
+        }
+        Action::Macro { .. } | Action::Text { .. } | Action::Run { .. } => {
+            if !up {
+                worker::submit(action);
+            }
+        }
     }
-    let input = INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: vk,
-                wScan: scan,
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: INJECT_TAG,
-            },
-        },
-    };
-    unsafe { SendInput(1, &input, size_of::<INPUT>() as i32) };
 }

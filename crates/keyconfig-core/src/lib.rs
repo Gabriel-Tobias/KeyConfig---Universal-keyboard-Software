@@ -6,4 +6,4 @@ pub mod profile;
 pub mod store;
 
 pub use keycode::{KeyCode, KeyOutput};
-pub use profile::{Action, Language, Layout, Profile};
+pub use profile::{Action, Language, Layout, MacroStep, Profile};

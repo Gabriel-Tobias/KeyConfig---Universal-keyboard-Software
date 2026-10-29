@@ -6,8 +6,10 @@
 mod autostart;
 mod elevation;
 mod hook;
+mod input;
 mod tray;
 mod util;
+mod worker;
 
 use std::cell::{Cell, RefCell};
 use std::mem::zeroed;
@@ -64,6 +66,7 @@ fn main() {
         }
     };
     tray::create(hwnd, APP);
+    worker::start(hwnd);
     reload_profile(false);
 
     if let Err(e) = hook::install() {
@@ -149,6 +152,10 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             if matches!(event, WM_RBUTTONUP | WM_LBUTTONUP | WM_CONTEXTMENU) {
                 show_menu(hwnd);
             }
+            0
+        }
+        worker::WM_WORKER_ERROR => {
+            tray::notify(Notice::Error, "Erro ao executar ação", &worker::take_error());
             0
         }
         WM_DESTROY => {

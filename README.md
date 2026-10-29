@@ -44,9 +44,31 @@ Exemplo de perfil:
 - **Teclas** usam a posição física no padrão W3C (`KeyA`, `Digit1`, `CapsLock`, `IntlRo`...), então o mesmo perfil funciona com qualquer idioma. A lista completa está em [keycode.rs](crates/keyconfig-core/src/keycode.rs).
 - **`layout`**: `60%`, `65%`, `75%`, `tkl`, `100%`.
 - **`language`**: `pt-BR-abnt2`, `en-US`, `en-US-intl`.
-- **Ações**: `key` (vira outra tecla) e `disabled` (não faz nada). Macros vêm depois.
-
 Depois de editar o arquivo, use **Recarregar perfil** no menu do ícone.
+
+### Ações
+
+| `type` | O que faz | Campos |
+|---|---|---|
+| `key` | Vira outra tecla | `to` |
+| `disabled` | Não faz nada | — |
+| `shortcut` | Combinação (ex.: Ctrl+C), mantida enquanto a tecla estiver pressionada | `keys` |
+| `macro` | Sequência de passos, uma vez por toque | `steps` |
+| `text` | Digita um texto (aceita acentos e `\n` para Enter) | `text` |
+| `run` | Abre programa, arquivo, pasta ou site | `command`, `args` (opcional) |
+
+Passos de macro: `{ "tap": "KeyA" }`, `{ "down": "ShiftLeft" }`, `{ "up": "ShiftLeft" }`, `{ "delay_ms": 100 }`, `{ "text": "olá" }`. Teclas apertadas com `down` e não soltas são liberadas no fim da macro.
+
+```json
+"mappings": {
+  "F13": { "type": "shortcut", "keys": ["ControlLeft", "KeyC"] },
+  "F14": { "type": "macro", "steps": [
+    { "tap": "MetaLeft" }, { "delay_ms": 300 }, { "text": "calculadora" }, { "delay_ms": 300 }, { "tap": "Enter" }
+  ] },
+  "F15": { "type": "text", "text": "Atenciosamente,\nGabriel" },
+  "F16": { "type": "run", "command": "https://github.com" }
+}
+```
 
 ## Programas rodando como administrador
 
