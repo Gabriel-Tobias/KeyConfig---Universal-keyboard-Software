@@ -1,0 +1,26 @@
+[package]
+name = "keyconfig-engine"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "keyconfig"
+path = "src/main.rs"
+
+[dependencies]
+keyconfig-core = { path = "../keyconfig-core" }
+
+[dependencies.windows-sys]
+version = "0.59"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+]
