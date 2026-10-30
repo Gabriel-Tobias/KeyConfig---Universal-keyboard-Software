@@ -7,6 +7,7 @@ mod capture;
 mod editor;
 mod engine;
 mod keyboard;
+mod theme;
 
 use eframe::egui;
 

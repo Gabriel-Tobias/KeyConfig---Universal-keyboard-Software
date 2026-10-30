@@ -7,7 +7,8 @@ use eframe::egui::{self, vec2, RichText};
 use keyconfig_core::geometry;
 use keyconfig_core::{Action, KeyCode, Language, MacroStep, Profile};
 
-use crate::keyboard::{summary, ACCENT};
+use crate::keyboard::summary;
+use crate::theme::{self, ACCENT};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -157,9 +158,14 @@ impl Editor {
     pub fn show(&mut self, ui: &mut egui::Ui, profile_id: &str, profile: &mut Profile, key: Option<KeyCode>) {
         let lang = profile.language;
         let Some(key) = key else {
-            ui.add_space(24.0);
+            ui.add_space(ui.available_height() * 0.3);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("Clique numa tecla do teclado acima para escolher o que ela faz.").size(16.0));
+                ui.label(RichText::new("⌨").size(34.0).color(theme::TEXT_FAINT));
+                ui.label(RichText::new("Selecione uma tecla").font(theme::bold(18.0)));
+                ui.label(
+                    RichText::new("Clique numa tecla do desenho ou use \"Capturar tecla\" para escolher o que ela faz.")
+                        .color(theme::TEXT_DIM),
+                );
             });
             return;
         };
@@ -174,13 +180,22 @@ impl Editor {
         }
 
         ui.horizontal(|ui| {
-            ui.label(RichText::new(geometry::describe(key, lang)).size(18.0).strong());
-            ui.label(RichText::new("→").size(18.0));
+            // A tecla selecionada como um "keycap" pequeno.
+            egui::Frame::none()
+                .fill(theme::SURFACE_HI)
+                .stroke(egui::Stroke::new(1.5_f32, theme::CYAN))
+                .rounding(8.0)
+                .inner_margin(egui::Margin::symmetric(12.0, 5.0))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(geometry::describe(key, lang)).font(theme::bold(17.0)).color(egui::Color32::WHITE));
+                });
+            ui.label(RichText::new("→").size(20.0).color(theme::TEXT_FAINT));
             let current = match profile.mappings.get(&key) {
                 Some(action) => describe_action(action, lang),
                 None => "comportamento padrão".to_owned(),
             };
-            ui.label(RichText::new(current).size(16.0).color(ACCENT));
+            let color = if profile.mappings.contains_key(&key) { ACCENT } else { theme::TEXT_DIM };
+            ui.label(RichText::new(current).font(theme::bold(15.0)).color(color));
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.add_enabled(profile.mappings.contains_key(&key), egui::Button::new("Restaurar padrão")).clicked() {
@@ -192,18 +207,9 @@ impl Editor {
                 }
             });
         });
-        ui.add_space(4.0);
-
-        ui.horizontal(|ui| {
-            for tab in Page::ALL {
-                let text = RichText::new(tab.label()).size(15.0);
-                if ui.selectable_label(self.tab == tab, text).clicked() {
-                    self.tab = tab;
-                }
-                ui.add_space(8.0);
-            }
-        });
-        ui.separator();
+        ui.add_space(10.0);
+        theme::tabs(ui, &mut self.tab, &Page::ALL.map(|p| (p, p.label())));
+        ui.add_space(10.0);
 
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| match self.tab {
             Page::Keyboard => {
@@ -211,17 +217,20 @@ impl Editor {
                     Some(Action::Key { to }) => Some(*to),
                     _ => None,
                 };
-                let groups = [
-                    ("Comuns", COMMON, 10),
-                    ("Avançadas", ADVANCED, 6),
-                    ("Teclado numérico", NUMPAD, 4),
-                    ("Modificadores", MODIFIERS, 4),
-                ];
-                if let Some(to) = palette(ui, lang, &groups, current) {
-                    profile.mappings.insert(key, Action::Key { to });
-                }
-                ui.add_space(8.0);
-                if let Some(action) = character_palette(ui, profile.mappings.get(&key)) {
+                let mut picked = None;
+                ui.columns(2, |cols| {
+                    if let Some(to) = palette(&mut cols[0], lang, &[("Comuns", COMMON)], current) {
+                        picked = Some(Action::Key { to });
+                    }
+                    if let Some(action) = character_palette(&mut cols[0], profile.mappings.get(&key)) {
+                        picked = Some(action);
+                    }
+                    let right = [("Avançadas", ADVANCED), ("Teclado numérico", NUMPAD), ("Modificadores", MODIFIERS)];
+                    if let Some(to) = palette(&mut cols[1], lang, &right, current) {
+                        picked = Some(Action::Key { to });
+                    }
+                });
+                if let Some(action) = picked {
                     profile.mappings.insert(key, action);
                 }
             }
@@ -230,7 +239,7 @@ impl Editor {
                     Some(Action::Key { to }) => Some(*to),
                     _ => None,
                 };
-                if let Some(to) = palette(ui, lang, &[("Mídia", MEDIA, 7)], current) {
+                if let Some(to) = palette(ui, lang, &[("Mídia", MEDIA)], current) {
                     profile.mappings.insert(key, Action::Key { to });
                 }
             }
@@ -305,7 +314,7 @@ impl Editor {
             } else {
                 keys.iter().map(|&k| button_text(k, lang)).collect::<Vec<_>>().join(" + ")
             };
-            ui.label(RichText::new(preview).size(16.0).strong().color(ACCENT));
+            ui.label(RichText::new(preview).font(theme::bold(16.0)).color(ACCENT));
             ui.add_space(16.0);
             if apply_button(ui, self.drafts.combo_key.is_some()) {
                 result = Some(Action::Shortcut { keys });
@@ -313,10 +322,14 @@ impl Editor {
         });
         ui.add_space(4.0);
         ui.label("E apertar:");
-        let groups = [("Comuns", COMMON, 10), ("Avançadas", ADVANCED, 6), ("Teclado numérico", NUMPAD, 4)];
-        if let Some(k) = palette(ui, lang, &groups, self.drafts.combo_key) {
-            self.drafts.combo_key = Some(k);
-        }
+        ui.columns(2, |cols| {
+            let left = palette(&mut cols[0], lang, &[("Comuns", COMMON)], self.drafts.combo_key);
+            let right = [("Avançadas", ADVANCED), ("Teclado numérico", NUMPAD)];
+            let right = palette(&mut cols[1], lang, &right, self.drafts.combo_key);
+            if let Some(k) = left.or(right) {
+                self.drafts.combo_key = Some(k);
+            }
+        });
         result
     }
 
@@ -438,37 +451,32 @@ fn key_combo(ui: &mut egui::Ui, key: &mut KeyCode, lang: Language) {
         });
 }
 
-/// Grupos de botões de teclas lado a lado; retorna a tecla clicada.
+const PALETTE_BUTTON: egui::Vec2 = vec2(44.0, 30.0);
+
+/// Grupos de botões de teclas, um embaixo do outro, quebrando linha na largura
+/// disponível; retorna a tecla clicada.
 fn palette(
     ui: &mut egui::Ui,
     lang: Language,
-    groups: &[(&str, &[KeyCode], usize)],
+    groups: &[(&str, &[KeyCode])],
     highlight: Option<KeyCode>,
 ) -> Option<KeyCode> {
-    const BUTTON: egui::Vec2 = vec2(46.0, 28.0);
-    let spacing = ui.spacing().item_spacing.x;
     let mut picked = None;
-    ui.horizontal_wrapped(|ui| {
-        for (title, keys, columns) in groups {
-            ui.vertical(|ui| {
-                let width = *columns as f32 * (BUTTON.x + spacing) + 24.0;
-                ui.set_width(width);
-                ui.label(RichText::new(*title).strong().size(14.0));
-                ui.horizontal_wrapped(|ui| {
-                    ui.set_max_width(width);
-                    for &k in *keys {
-                        let button = egui::Button::new(button_text(k, lang))
-                            .min_size(BUTTON)
-                            .selected(highlight == Some(k));
-                        if ui.add(button).on_hover_text(geometry::describe(k, lang)).clicked() {
-                            picked = Some(k);
-                        }
-                    }
-                });
-            });
-            ui.add_space(20.0);
-        }
-    });
+    for (title, keys) in groups {
+        theme::section(ui, title);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
+            for &k in *keys {
+                let button = egui::Button::new(button_text(k, lang))
+                    .min_size(PALETTE_BUTTON)
+                    .selected(highlight == Some(k));
+                if ui.add(button).on_hover_text(geometry::describe(k, lang)).clicked() {
+                    picked = Some(k);
+                }
+            }
+        });
+        ui.add_space(12.0);
+    }
     picked
 }
 
@@ -476,35 +484,35 @@ fn palette(
 fn character_palette(ui: &mut egui::Ui, current: Option<&Action>) -> Option<Action> {
     let button = |text: String, selected: bool| {
         egui::Button::new(RichText::new(text).size(16.0))
-            .min_size(vec2(46.0, 28.0))
+            .min_size(PALETTE_BUTTON)
             .selected(selected)
     };
     let mut picked = None;
-    ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.label(RichText::new("Acentos").strong().size(14.0));
-            ui.horizontal(|ui| {
-                for accent in keyconfig_core::accent::ACCENTS {
-                    let selected = current == Some(&Action::DeadKey { accent });
-                    if ui.add(button(accent.to_string(), selected)).clicked() {
-                        picked = Some(Action::DeadKey { accent });
-                    }
-                }
-            });
-            ui.label(RichText::new("Combinam com a próxima letra: ~ + a = ã. Com espaço, sai o acento sozinho.").weak().small());
-        });
-        ui.add_space(24.0);
-        ui.vertical(|ui| {
-            ui.label(RichText::new("Caracteres").strong().size(14.0));
-            ui.horizontal_wrapped(|ui| {
-                for &c in CHARACTERS {
-                    let selected = matches!(current, Some(Action::Text { text }) if text == c);
-                    if ui.add(button(c.to_owned(), selected)).clicked() {
-                        picked = Some(Action::Text { text: c.to_owned() });
-                    }
-                }
-            });
-        });
+    theme::section(ui, "Acentos");
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
+        for accent in keyconfig_core::accent::ACCENTS {
+            let selected = current == Some(&Action::DeadKey { accent });
+            if ui.add(button(accent.to_string(), selected)).clicked() {
+                picked = Some(Action::DeadKey { accent });
+            }
+        }
+    });
+    ui.label(
+        RichText::new("Combinam com a próxima letra: ~ + a = ã. Com espaço, sai o acento sozinho.")
+            .size(11.5)
+            .color(theme::TEXT_FAINT),
+    );
+    ui.add_space(12.0);
+    theme::section(ui, "Caracteres");
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
+        for &c in CHARACTERS {
+            let selected = matches!(current, Some(Action::Text { text }) if text == c);
+            if ui.add(button(c.to_owned(), selected)).clicked() {
+                picked = Some(Action::Text { text: c.to_owned() });
+            }
+        }
     });
     picked
 }
@@ -537,6 +545,6 @@ fn describe_action(action: &Action, lang: Language) -> String {
 }
 
 fn apply_button(ui: &mut egui::Ui, enabled: bool) -> bool {
-    let button = egui::Button::new(RichText::new("Aplicar").size(15.0)).min_size(vec2(90.0, 30.0));
+    let button = theme::primary("Aplicar").min_size(vec2(110.0, 34.0));
     ui.add_enabled(enabled, button).clicked()
 }
