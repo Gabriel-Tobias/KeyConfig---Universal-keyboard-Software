@@ -12,13 +12,14 @@ mod theme;
 use eframe::egui;
 
 fn main() -> eframe::Result {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("KeyConfig")
-            .with_inner_size([1180.0, 880.0])
-            .with_min_inner_size([860.0, 600.0]),
-        ..Default::default()
-    };
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("KeyConfig")
+        .with_inner_size([1360.0, 900.0])
+        .with_min_inner_size([980.0, 640.0]);
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon/icon-256.png")) {
+        viewport = viewport.with_icon(icon);
+    }
+    let options = eframe::NativeOptions { viewport, ..Default::default() };
     eframe::run_native(
         "KeyConfig",
         options,

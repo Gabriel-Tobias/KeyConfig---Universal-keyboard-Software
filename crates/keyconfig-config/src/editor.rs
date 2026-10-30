@@ -1,14 +1,17 @@
-//! Painel de baixo: escolhe o que a tecla selecionada faz.
+//! Cartão de baixo: escolhe o que a tecla selecionada faz.
 //!
 //! Teclado e Multimídia aplicam no clique. As outras abas editam um rascunho
 //! que só vai para o perfil ao clicar em "Aplicar".
 
-use eframe::egui::{self, vec2, RichText};
+use eframe::egui::{self, vec2, Align2, Color32, Frame, Margin, Rect, RichText, Sense, Stroke};
 use keyconfig_core::geometry;
 use keyconfig_core::{Action, KeyCode, Language, MacroStep, Profile};
 
 use crate::keyboard::summary;
-use crate::theme::{self, ACCENT};
+use crate::theme::{
+    self, icon, Kind, ACCENT, ACCENT_BG, BORDER, CARD, CHIP, CHIP_BORDER, CONTROL_HOVER, DIVIDER, TEXT,
+    TEXT_DIM, TEXT_FAINT,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -48,12 +51,85 @@ impl Page {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Category {
+    Common,
+    Advanced,
+    Numpad,
+    Modifiers,
+    Accents,
+    Characters,
+}
+
+impl Category {
+    const ALL: [Category; 6] = [
+        Category::Common,
+        Category::Advanced,
+        Category::Numpad,
+        Category::Modifiers,
+        Category::Accents,
+        Category::Characters,
+    ];
+    /// Só as que geram teclas, para a aba Combinação.
+    const KEYS: [Category; 3] = [Category::Common, Category::Advanced, Category::Numpad];
+
+    fn label(self) -> &'static str {
+        match self {
+            Category::Common => "Comuns",
+            Category::Advanced => "Avançadas",
+            Category::Numpad => "Numérico",
+            Category::Modifiers => "Modificadores",
+            Category::Accents => "Acentos",
+            Category::Characters => "Caracteres",
+        }
+    }
+
+    fn chips(self, lang: Language) -> Vec<Chip> {
+        let keys = |list: &[KeyCode]| list.iter().map(|&k| Chip::key(k, lang)).collect();
+        match self {
+            Category::Common => keys(COMMON),
+            Category::Advanced => keys(ADVANCED),
+            Category::Numpad => keys(NUMPAD),
+            Category::Modifiers => keys(MODIFIERS),
+            Category::Accents => keyconfig_core::accent::ACCENTS
+                .iter()
+                .map(|&accent| Chip {
+                    label: accent.to_string(),
+                    hint: format!("Acento {accent}: combina com a próxima letra"),
+                    action: Action::DeadKey { accent },
+                })
+                .collect(),
+            Category::Characters => CHARACTERS
+                .iter()
+                .map(|&c| Chip {
+                    label: c.to_owned(),
+                    hint: format!("Digita {c}"),
+                    action: Action::Text { text: c.to_owned() },
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Uma opção da grade: o texto do botão e a ação que ele aplica.
+struct Chip {
+    label: String,
+    hint: String,
+    action: Action,
+}
+
+impl Chip {
+    fn key(k: KeyCode, lang: Language) -> Chip {
+        Chip { label: button_text(k, lang), hint: geometry::describe(k, lang), action: Action::Key { to: k } }
+    }
+}
+
 use KeyCode::*;
 
 const COMMON: &[KeyCode] = &[
     KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO,
-    KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY, KeyZ, Digit1, Digit2, Digit3,
-    Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, Digit0, Backquote, Minus, Equal, BracketLeft,
+    KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY, KeyZ, Digit0, Digit1, Digit2,
+    Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, Backquote, Minus, Equal, BracketLeft,
     BracketRight, Backslash, Semicolon, Quote, Comma, Period, Slash, IntlBackslash, IntlRo, Space,
 ];
 const ADVANCED: &[KeyCode] = &[
@@ -62,9 +138,9 @@ const ADVANCED: &[KeyCode] = &[
     F5, F6, F7, F8, F9, F10, F11, F12, F13, F14, F15, F16, F17, F18, F19, F20, F21, F22, F23, F24,
 ];
 const NUMPAD: &[KeyCode] = &[
-    NumLock, NumpadDivide, NumpadMultiply, NumpadSubtract, Numpad7, Numpad8, Numpad9, NumpadAdd,
-    Numpad4, Numpad5, Numpad6, NumpadComma, Numpad1, Numpad2, Numpad3, NumpadEnter, Numpad0,
-    NumpadDecimal,
+    NumLock, NumpadDivide, NumpadMultiply, NumpadSubtract, NumpadAdd, NumpadDecimal, NumpadComma,
+    NumpadEnter, Numpad0, Numpad1, Numpad2, Numpad3, Numpad4, Numpad5, Numpad6, Numpad7, Numpad8,
+    Numpad9,
 ];
 const MODIFIERS: &[KeyCode] = &[
     ControlLeft, ShiftLeft, AltLeft, MetaLeft, ControlRight, ShiftRight, AltRight, MetaRight,
@@ -144,6 +220,8 @@ pub struct Editor {
     tab: Page,
     drafts: Drafts,
     loaded_for: Option<(String, KeyCode)>,
+    query: String,
+    category: Category,
 }
 
 impl Editor {
@@ -152,23 +230,28 @@ impl Editor {
             tab: Page::Keyboard,
             drafts: Drafts::default(),
             loaded_for: None,
+            query: String::new(),
+            category: Category::Common,
         }
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, profile_id: &str, profile: &mut Profile, key: Option<KeyCode>) {
-        let lang = profile.language;
-        let Some(key) = key else {
-            ui.add_space(ui.available_height() * 0.3);
-            ui.vertical_centered(|ui| {
-                ui.label(RichText::new("⌨").size(34.0).color(theme::TEXT_FAINT));
-                ui.label(RichText::new("Selecione uma tecla").font(theme::bold(18.0)));
-                ui.label(
-                    RichText::new("Clique numa tecla do desenho ou use \"Capturar tecla\" para escolher o que ela faz.")
-                        .color(theme::TEXT_DIM),
-                );
+        Frame::none()
+            .fill(CARD)
+            .stroke(Stroke::new(1.0_f32, BORDER))
+            .rounding(16.0)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 0.0;
+                match key {
+                    Some(key) => self.contents(ui, profile_id, profile, key),
+                    None => empty_state(ui),
+                }
             });
-            return;
-        };
+    }
+
+    fn contents(&mut self, ui: &mut egui::Ui, profile_id: &str, profile: &mut Profile, key: KeyCode) {
+        let lang = profile.language;
 
         // Trocou de tecla ou de perfil: recarrega os rascunhos e escolhe a aba certa.
         let target = (profile_id.to_owned(), key);
@@ -176,211 +259,283 @@ impl Editor {
             let action = profile.mappings.get(&key);
             self.drafts = Drafts::from_action(action);
             self.tab = Page::for_action(action);
+            if let Some(Action::DeadKey { .. }) = action {
+                self.category = Category::Accents;
+            } else if let Some(Action::Text { .. }) = action {
+                self.category = Category::Characters;
+            }
             self.loaded_for = Some(target);
         }
 
-        ui.horizontal(|ui| {
-            // A tecla selecionada como um "keycap" pequeno.
-            egui::Frame::none()
-                .fill(theme::SURFACE_HI)
-                .stroke(egui::Stroke::new(1.5_f32, theme::CYAN))
-                .rounding(8.0)
-                .inner_margin(egui::Margin::symmetric(12.0, 5.0))
-                .show(ui, |ui| {
-                    ui.label(RichText::new(geometry::describe(key, lang)).font(theme::bold(17.0)).color(egui::Color32::WHITE));
+        // Cabeçalho: tecla → o que ela faz, e as ações rápidas.
+        section(ui, Margin::symmetric(20.0, 18.0), true, |ui| {
+            ui.horizontal(|ui| {
+                key_badge(ui, key, lang);
+                ui.add_space(4.0);
+                ui.label(RichText::new(icon::ARROW).font(theme::icon_font(14.0)).color(TEXT_FAINT));
+                ui.add_space(4.0);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    let (text, color) = match profile.mappings.get(&key) {
+                        Some(action) => (describe_action(action, lang), ACCENT),
+                        None => ("Comportamento padrão".to_owned(), TEXT),
+                    };
+                    ui.label(RichText::new(text).font(theme::semibold(16.0)).color(color));
+                    ui.label(RichText::new("Escolha abaixo o que esta tecla deve fazer").size(12.0).color(TEXT_FAINT));
                 });
-            ui.label(RichText::new("→").size(20.0).color(theme::TEXT_FAINT));
-            let current = match profile.mappings.get(&key) {
-                Some(action) => describe_action(action, lang),
-                None => "comportamento padrão".to_owned(),
-            };
-            let color = if profile.mappings.contains_key(&key) { ACCENT } else { theme::TEXT_DIM };
-            ui.label(RichText::new(current).font(theme::bold(15.0)).color(color));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mapped = profile.mappings.contains_key(&key);
+                    if theme::button(ui, Kind::Ghost, Some(icon::RESET), "Restaurar padrão", mapped).clicked() {
+                        profile.mappings.remove(&key);
+                    }
+                    let off = profile.mappings.get(&key) == Some(&Action::Disabled);
+                    if theme::button(ui, Kind::Danger, Some(icon::POWER), "Desligar tecla", !off).clicked() {
+                        profile.mappings.insert(key, Action::Disabled);
+                    }
+                });
+            });
+        });
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.add_enabled(profile.mappings.contains_key(&key), egui::Button::new("Restaurar padrão")).clicked() {
-                    profile.mappings.remove(&key);
-                }
-                let disabled = profile.mappings.get(&key) == Some(&Action::Disabled);
-                if ui.add_enabled(!disabled, egui::Button::new("Desligar tecla")).clicked() {
-                    profile.mappings.insert(key, Action::Disabled);
+        // Abas.
+        section(ui, Margin::symmetric(16.0, 12.0), true, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                for page in Page::ALL {
+                    if tab_button(ui, page.label(), self.tab == page).clicked() {
+                        self.tab = page;
+                    }
                 }
             });
         });
-        ui.add_space(10.0);
-        theme::tabs(ui, &mut self.tab, &Page::ALL.map(|p| (p, p.label())));
-        ui.add_space(10.0);
 
-        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| match self.tab {
-            Page::Keyboard => {
-                let current = match profile.mappings.get(&key) {
-                    Some(Action::Key { to }) => Some(*to),
-                    _ => None,
-                };
-                let mut picked = None;
-                ui.columns(2, |cols| {
-                    if let Some(to) = palette(&mut cols[0], lang, &[("Comuns", COMMON)], current) {
-                        picked = Some(Action::Key { to });
+        section(ui, Margin { left: 20.0, right: 20.0, top: 18.0, bottom: 22.0 }, false, |ui| {
+            ui.spacing_mut().item_spacing.y = 16.0;
+            let current = profile.mappings.get(&key).cloned();
+            match self.tab {
+                Page::Keyboard => {
+                    if let Some(action) = self.chooser(ui, lang, &Category::ALL, current.as_ref()) {
+                        profile.mappings.insert(key, action);
                     }
-                    if let Some(action) = character_palette(&mut cols[0], profile.mappings.get(&key)) {
-                        picked = Some(action);
+                }
+                Page::Media => {
+                    let chips: Vec<Chip> = MEDIA
+                        .iter()
+                        .map(|&k| Chip {
+                            label: geometry::describe(k, lang).replace("Mídia: ", ""),
+                            hint: geometry::describe(k, lang),
+                            action: Action::Key { to: k },
+                        })
+                        .collect();
+                    ui.label(RichText::new("Controle de música e volume, em qualquer programa.").color(TEXT_DIM));
+                    if let Some(action) = chip_grid(ui, &chips, current.as_ref(), 120.0) {
+                        profile.mappings.insert(key, action);
                     }
-                    let right = [("Avançadas", ADVANCED), ("Teclado numérico", NUMPAD), ("Modificadores", MODIFIERS)];
-                    if let Some(to) = palette(&mut cols[1], lang, &right, current) {
-                        picked = Some(Action::Key { to });
+                }
+                Page::Combination => {
+                    if let Some(action) = self.combination(ui, lang) {
+                        profile.mappings.insert(key, action);
                     }
-                });
-                if let Some(action) = picked {
-                    profile.mappings.insert(key, action);
                 }
-            }
-            Page::Media => {
-                let current = match profile.mappings.get(&key) {
-                    Some(Action::Key { to }) => Some(*to),
-                    _ => None,
-                };
-                if let Some(to) = palette(ui, lang, &[("Mídia", MEDIA)], current) {
-                    profile.mappings.insert(key, Action::Key { to });
+                Page::Macro => {
+                    if let Some(action) = self.macro_editor(ui, lang) {
+                        profile.mappings.insert(key, action);
+                    }
                 }
-            }
-            Page::Combination => {
-                if let Some(action) = self.combination(ui, lang) {
-                    profile.mappings.insert(key, action);
-                }
-            }
-            Page::Macro => {
-                if let Some(action) = self.macro_editor(ui, lang) {
-                    profile.mappings.insert(key, action);
-                }
-            }
-            Page::Text => {
-                ui.label("O texto é digitado do jeito que está escrito, com acentos, em qualquer idioma de teclado.");
-                ui.add(
-                    egui::TextEdit::multiline(&mut self.drafts.text)
-                        .desired_rows(5)
-                        .desired_width(600.0)
-                        .hint_text("Ex.: Atenciosamente,\nGabriel"),
-                );
-                if apply_button(ui, !self.drafts.text.is_empty()) {
-                    profile.mappings.insert(key, Action::Text { text: self.drafts.text.clone() });
-                }
-            }
-            Page::Run => {
-                ui.label("Abre um programa, arquivo, pasta ou site.");
-                egui::Grid::new("run").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                    ui.label("Abrir:");
+                Page::Text => {
+                    ui.label(
+                        RichText::new("O texto é digitado do jeito que está escrito, com acentos, em qualquer idioma de teclado.")
+                            .color(TEXT_DIM),
+                    );
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.drafts.command)
-                            .desired_width(460.0)
-                            .hint_text(r"notepad.exe, C:\Jogos\jogo.exe ou https://..."),
+                        egui::TextEdit::multiline(&mut self.drafts.text)
+                            .desired_rows(5)
+                            .desired_width(f32::INFINITY)
+                            .margin(Margin::same(12.0))
+                            .hint_text("Ex.: Atenciosamente,\nGabriel"),
                     );
-                    ui.end_row();
-                    ui.label("Argumentos:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.drafts.args)
-                            .desired_width(460.0)
-                            .hint_text("opcional"),
-                    );
-                    ui.end_row();
-                });
-                if apply_button(ui, !self.drafts.command.trim().is_empty()) {
-                    profile.mappings.insert(
-                        key,
-                        Action::Run {
-                            command: self.drafts.command.trim().to_owned(),
-                            args: self.drafts.args.trim().to_owned(),
-                        },
-                    );
+                    if theme::button(ui, Kind::Primary, None, "Aplicar", !self.drafts.text.is_empty()).clicked() {
+                        profile.mappings.insert(key, Action::Text { text: self.drafts.text.clone() });
+                    }
+                }
+                Page::Run => {
+                    ui.label(RichText::new("Abre um programa, arquivo, pasta ou site.").color(TEXT_DIM));
+                    egui::Grid::new("run").num_columns(2).spacing([12.0, 10.0]).show(ui, |ui| {
+                        theme::field_label(ui, "Abrir");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.drafts.command)
+                                .desired_width(480.0)
+                                .margin(Margin::symmetric(12.0, 9.0))
+                                .hint_text(r"notepad.exe, C:\Jogos\jogo.exe ou https://..."),
+                        );
+                        ui.end_row();
+                        theme::field_label(ui, "Argumentos");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.drafts.args)
+                                .desired_width(480.0)
+                                .margin(Margin::symmetric(12.0, 9.0))
+                                .hint_text("opcional"),
+                        );
+                        ui.end_row();
+                    });
+                    let ok = !self.drafts.command.trim().is_empty();
+                    if theme::button(ui, Kind::Primary, None, "Aplicar", ok).clicked() {
+                        profile.mappings.insert(
+                            key,
+                            Action::Run {
+                                command: self.drafts.command.trim().to_owned(),
+                                args: self.drafts.args.trim().to_owned(),
+                            },
+                        );
+                    }
                 }
             }
         });
+    }
+
+    /// Busca + categorias + grade de opções. Retorna a ação clicada.
+    fn chooser(
+        &mut self,
+        ui: &mut egui::Ui,
+        lang: Language,
+        categories: &[Category],
+        current: Option<&Action>,
+    ) -> Option<Action> {
+        if !categories.contains(&self.category) {
+            self.category = categories[0];
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
+            search_field(ui, &mut self.query);
+            for &cat in categories {
+                let count = cat.chips(lang).len().to_string();
+                let on = cat == self.category && self.query.is_empty();
+                if theme::chip_toggle(ui, cat.label(), Some(&count), on).clicked() {
+                    self.category = cat;
+                    self.query.clear();
+                }
+            }
+        });
+
+        let query = self.query.trim().to_lowercase();
+        let chips: Vec<Chip> = if query.is_empty() {
+            if self.category == Category::Accents {
+                ui.label(
+                    RichText::new("Combinam com a próxima letra: ~ + a = ã. Com espaço, sai só o acento.")
+                        .size(12.0)
+                        .color(TEXT_DIM),
+                );
+            }
+            self.category.chips(lang)
+        } else {
+            let mut found: Vec<Chip> = Vec::new();
+            for cat in categories {
+                for chip in cat.chips(lang) {
+                    let matches = chip.label.to_lowercase().contains(&query) || chip.hint.to_lowercase().contains(&query);
+                    if matches && !found.iter().any(|c| c.action == chip.action) {
+                        found.push(chip);
+                    }
+                }
+            }
+            found
+        };
+        if chips.is_empty() {
+            ui.label(RichText::new("Nenhuma tecla encontrada.").color(TEXT_FAINT));
+            return None;
+        }
+        chip_grid(ui, &chips, current, 64.0)
     }
 
     fn combination(&mut self, ui: &mut egui::Ui, lang: Language) -> Option<Action> {
         let mut result = None;
         ui.horizontal(|ui| {
-            ui.label("Segurar:");
+            ui.spacing_mut().item_spacing.x = 8.0;
+            theme::field_label(ui, "Segurar");
             for (i, (_, name)) in COMBO_MODS.iter().enumerate() {
-                let on = self.drafts.mods[i];
-                if ui.add(egui::Button::new(*name).selected(on).min_size(vec2(56.0, 28.0))).clicked() {
-                    self.drafts.mods[i] = !on;
+                if theme::chip_toggle(ui, name, None, self.drafts.mods[i]).clicked() {
+                    self.drafts.mods[i] = !self.drafts.mods[i];
                 }
             }
-            ui.add_space(16.0);
-
+            ui.add_space(12.0);
             let keys = self.drafts.shortcut_keys();
-            let preview = if keys.is_empty() {
-                "escolha as teclas".to_owned()
+            let preview = if self.drafts.combo_key.is_none() {
+                "escolha a tecla abaixo".to_owned()
             } else {
-                keys.iter().map(|&k| button_text(k, lang)).collect::<Vec<_>>().join(" + ")
+                keys.iter().map(|&k| geometry::label(k, lang)).collect::<Vec<_>>().join(" + ")
             };
-            ui.label(RichText::new(preview).font(theme::bold(16.0)).color(ACCENT));
-            ui.add_space(16.0);
-            if apply_button(ui, self.drafts.combo_key.is_some()) {
-                result = Some(Action::Shortcut { keys });
-            }
+            let color = if self.drafts.combo_key.is_some() { ACCENT } else { TEXT_FAINT };
+            ui.label(RichText::new(preview).font(theme::mono(14.0)).color(color));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if theme::button(ui, Kind::Primary, None, "Aplicar", self.drafts.combo_key.is_some()).clicked() {
+                    result = Some(Action::Shortcut { keys });
+                }
+            });
         });
-        ui.add_space(4.0);
-        ui.label("E apertar:");
-        ui.columns(2, |cols| {
-            let left = palette(&mut cols[0], lang, &[("Comuns", COMMON)], self.drafts.combo_key);
-            let right = [("Avançadas", ADVANCED), ("Teclado numérico", NUMPAD)];
-            let right = palette(&mut cols[1], lang, &right, self.drafts.combo_key);
-            if let Some(k) = left.or(right) {
-                self.drafts.combo_key = Some(k);
-            }
-        });
+        let current = self.drafts.combo_key.map(|k| Action::Key { to: k });
+        if let Some(Action::Key { to }) = self.chooser(ui, lang, &Category::KEYS, current.as_ref()) {
+            self.drafts.combo_key = Some(to);
+        }
         result
     }
 
     fn macro_editor(&mut self, ui: &mut egui::Ui, lang: Language) -> Option<Action> {
         let steps = &mut self.drafts.steps;
-        ui.horizontal(|ui| {
-            ui.label("Adicionar:");
+        ui.horizontal_wrapped(|ui| {
+            theme::field_label(ui, "Adicionar");
             let last_key = steps.iter().rev().find_map(step_key).unwrap_or(KeyA);
-            if ui.button("Tocar tecla").clicked() {
+            let add = |ui: &mut egui::Ui, text: &str| theme::button(ui, Kind::Normal, Some(icon::ADD), text, true).clicked();
+            if add(ui, "Tocar tecla") {
                 steps.push(MacroStep::Tap(last_key));
             }
-            if ui.button("Segurar tecla").clicked() {
+            if add(ui, "Segurar tecla") {
                 steps.push(MacroStep::Down(last_key));
             }
-            if ui.button("Soltar tecla").clicked() {
+            if add(ui, "Soltar tecla") {
                 steps.push(MacroStep::Up(last_key));
             }
-            if ui.button("Pausa").clicked() {
+            if add(ui, "Pausa") {
                 steps.push(MacroStep::DelayMs(100));
             }
-            if ui.button("Texto").clicked() {
+            if add(ui, "Texto") {
                 steps.push(MacroStep::Text(String::new()));
             }
         });
-        ui.add_space(4.0);
 
         if steps.is_empty() {
-            ui.label(RichText::new("A macro ainda não tem passos.").italics());
+            ui.label(RichText::new("A macro ainda não tem passos.").color(TEXT_FAINT));
         }
 
-        let mut action = None;
         let mut remove = None;
         let mut swap = None;
         let count = steps.len();
-        for (i, step) in steps.iter_mut().enumerate() {
-            ui.push_id(i, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(format!("{:>2}.", i + 1));
-                    step_editor(ui, step, lang);
-                    if ui.add_enabled(i > 0, egui::Button::new("⬆")).clicked() {
-                        swap = Some(i - 1);
-                    }
-                    if ui.add_enabled(i + 1 < count, egui::Button::new("⬇")).clicked() {
-                        swap = Some(i);
-                    }
-                    if ui.button("🗑").clicked() {
-                        remove = Some(i);
-                    }
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            for (i, step) in steps.iter_mut().enumerate() {
+                ui.push_id(i, |ui| {
+                    Frame::none()
+                        .fill(CHIP)
+                        .stroke(Stroke::new(1.0_f32, CHIP_BORDER))
+                        .rounding(10.0)
+                        .inner_margin(Margin::symmetric(12.0, 6.0))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("{:02}", i + 1)).font(theme::mono(13.0)).color(TEXT_FAINT));
+                                step_editor(ui, step, lang);
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if theme::icon_button(ui, icon::DELETE, "Remover", true).clicked() {
+                                        remove = Some(i);
+                                    }
+                                    if theme::icon_button(ui, "\u{E70D}", "Descer", i + 1 < count).clicked() {
+                                        swap = Some(i);
+                                    }
+                                    if theme::icon_button(ui, "\u{E70E}", "Subir", i > 0).clicked() {
+                                        swap = Some(i - 1);
+                                    }
+                                });
+                            });
+                        });
                 });
-            });
-        }
+            }
+        });
         if let Some(i) = swap {
             steps.swap(i, i + 1);
         }
@@ -388,12 +543,131 @@ impl Editor {
             steps.remove(i);
         }
 
-        ui.add_space(6.0);
-        if apply_button(ui, !steps.is_empty()) {
+        let mut action = None;
+        if theme::button(ui, Kind::Primary, None, "Aplicar", !steps.is_empty()).clicked() {
             action = Some(Action::Macro { steps: steps.clone() });
         }
         action
     }
+}
+
+/// Bloco do cartão com margem própria e, opcionalmente, uma linha divisória embaixo.
+fn section(ui: &mut egui::Ui, margin: Margin, divider: bool, add: impl FnOnce(&mut egui::Ui)) {
+    let response = Frame::none().inner_margin(margin).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.spacing_mut().item_spacing.y = 8.0;
+        add(ui);
+    });
+    if divider {
+        let r = response.response.rect;
+        ui.painter().hline(r.x_range(), r.bottom(), Stroke::new(1.0_f32, DIVIDER));
+    }
+}
+
+fn empty_state(ui: &mut egui::Ui) {
+    Frame::none().inner_margin(Margin::symmetric(20.0, 48.0)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.vertical_centered(|ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            ui.label(RichText::new(icon::KEYBOARD).font(theme::icon_font(28.0)).color(TEXT_FAINT));
+            ui.label(RichText::new("Selecione uma tecla").font(theme::semibold(15.0)).color(TEXT));
+            ui.label(
+                RichText::new("Clique numa tecla do desenho ou use \"Capturar tecla\" para escolher o que ela faz.")
+                    .size(13.0)
+                    .color(TEXT_FAINT),
+            );
+        });
+    });
+}
+
+/// A tecla selecionada, como uma tecla âmbar no cabeçalho.
+fn key_badge(ui: &mut egui::Ui, key: KeyCode, lang: Language) {
+    let label = match geometry::label(key, lang) {
+        "" => "Espaço",
+        l => l,
+    };
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), theme::mono(15.0), TEXT);
+    let width = (galley.size().x + 20.0).max(44.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 44.0), Sense::hover());
+    ui.painter().rect(rect, 10.0, Color32::from_rgb(0x2e, 0x27, 0x16), Stroke::new(2.0_f32, ACCENT));
+    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, TEXT);
+}
+
+fn tab_button(ui: &mut egui::Ui, text: &str, on: bool) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), theme::medium(14.0), TEXT);
+    let (rect, response) = ui.allocate_exact_size(vec2(galley.size().x + 32.0, 36.0), Sense::click());
+    let hovered = response.hovered();
+    let (fill, color) = if on {
+        (Color32::from_rgb(0x2a, 0x30, 0x3b), Color32::WHITE)
+    } else if hovered {
+        (CONTROL_HOVER.gamma_multiply(0.8), TEXT)
+    } else {
+        (Color32::TRANSPARENT, TEXT_DIM)
+    };
+    ui.painter().rect_filled(rect, 8.0, fill);
+    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, color);
+    if hovered {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    response
+}
+
+/// Campo de busca com a lupa dentro, à esquerda.
+fn search_field(ui: &mut egui::Ui, query: &mut String) {
+    Frame::none()
+        .fill(theme::FIELD)
+        .stroke(Stroke::new(1.0_f32, theme::CONTROL_BORDER))
+        .rounding(8.0)
+        .inner_margin(Margin::symmetric(12.0, 0.0))
+        .show(ui, |ui| {
+            ui.set_height(34.0);
+            ui.horizontal_centered(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.label(RichText::new(icon::SEARCH).font(theme::icon_font(13.0)).color(TEXT_FAINT));
+                ui.add(
+                    egui::TextEdit::singleline(query)
+                        .frame(false)
+                        .desired_width(180.0)
+                        .margin(Margin::ZERO)
+                        .hint_text("Buscar tecla…"),
+                );
+            });
+        });
+}
+
+/// Grade de opções que se ajusta à largura (como `repeat(auto-fill, minmax(64px, 1fr))`).
+fn chip_grid(ui: &mut egui::Ui, chips: &[Chip], current: Option<&Action>, min_width: f32) -> Option<Action> {
+    const GAP: f32 = 8.0;
+    let width = ui.available_width();
+    let columns = (((width + GAP) / (min_width + GAP)).floor() as usize).max(1);
+    let chip_width = (width - GAP * (columns - 1) as f32) / columns as f32;
+    let rows = chips.len().div_ceil(columns);
+    let (area, _) = ui.allocate_exact_size(vec2(width, rows as f32 * (40.0 + GAP) - GAP), Sense::hover());
+
+    let mut picked = None;
+    for (i, chip) in chips.iter().enumerate() {
+        let (row, col) = (i / columns, i % columns);
+        let rect = Rect::from_min_size(
+            area.min + vec2(col as f32 * (chip_width + GAP), row as f32 * (40.0 + GAP)),
+            vec2(chip_width, 40.0),
+        );
+        let response = ui.interact(rect, ui.id().with(("chip", i)), Sense::click());
+        let active = current == Some(&chip.action);
+        let hovered = response.hovered();
+        let (fill, stroke) = if active || hovered { (ACCENT_BG, ACCENT) } else { (CHIP, CHIP_BORDER) };
+        let painter = ui.painter();
+        painter.rect(rect, 8.0, fill, Stroke::new(1.0_f32, stroke));
+        let color = if active { ACCENT } else { TEXT };
+        let text = fit(&chip.label, chip_width - 16.0, 13.0 * 0.62);
+        painter.text(rect.center(), Align2::CENTER_CENTER, text, theme::mono_medium(13.0), color);
+        if hovered {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if response.on_hover_text(&chip.hint).clicked() {
+            picked = Some(chip.action.clone());
+        }
+    }
+    picked
 }
 
 fn step_key(step: &MacroStep) -> Option<KeyCode> {
@@ -417,7 +691,7 @@ fn step_editor(ui: &mut egui::Ui, step: &mut MacroStep, lang: Language) {
         .position(|(_, k)| std::mem::discriminant(k) == std::mem::discriminant(step))
         .unwrap_or(0);
     egui::ComboBox::from_id_salt("kind")
-        .width(90.0)
+        .width(100.0)
         .selected_text(kinds[current].0)
         .show_ui(ui, |ui| {
             for (i, (name, new)) in kinds.iter().enumerate() {
@@ -433,7 +707,12 @@ fn step_editor(ui: &mut egui::Ui, step: &mut MacroStep, lang: Language) {
             ui.add(egui::DragValue::new(ms).range(0..=60_000).suffix(" ms").speed(10));
         }
         MacroStep::Text(text) => {
-            ui.add(egui::TextEdit::singleline(text).desired_width(300.0).hint_text("texto"));
+            ui.add(
+                egui::TextEdit::singleline(text)
+                    .desired_width(300.0)
+                    .margin(Margin::symmetric(10.0, 6.0))
+                    .hint_text("texto"),
+            );
         }
     }
 }
@@ -449,72 +728,6 @@ fn key_combo(ui: &mut egui::Ui, key: &mut KeyCode, lang: Language) {
                 ui.selectable_value(key, k, geometry::describe(k, lang));
             }
         });
-}
-
-const PALETTE_BUTTON: egui::Vec2 = vec2(44.0, 30.0);
-
-/// Grupos de botões de teclas, um embaixo do outro, quebrando linha na largura
-/// disponível; retorna a tecla clicada.
-fn palette(
-    ui: &mut egui::Ui,
-    lang: Language,
-    groups: &[(&str, &[KeyCode])],
-    highlight: Option<KeyCode>,
-) -> Option<KeyCode> {
-    let mut picked = None;
-    for (title, keys) in groups {
-        theme::section(ui, title);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
-            for &k in *keys {
-                let button = egui::Button::new(button_text(k, lang))
-                    .min_size(PALETTE_BUTTON)
-                    .selected(highlight == Some(k));
-                if ui.add(button).on_hover_text(geometry::describe(k, lang)).clicked() {
-                    picked = Some(k);
-                }
-            }
-        });
-        ui.add_space(12.0);
-    }
-    picked
-}
-
-/// Acentos (teclas mortas) e caracteres prontos; ambos funcionam em qualquer idioma do Windows.
-fn character_palette(ui: &mut egui::Ui, current: Option<&Action>) -> Option<Action> {
-    let button = |text: String, selected: bool| {
-        egui::Button::new(RichText::new(text).size(16.0))
-            .min_size(PALETTE_BUTTON)
-            .selected(selected)
-    };
-    let mut picked = None;
-    theme::section(ui, "Acentos");
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
-        for accent in keyconfig_core::accent::ACCENTS {
-            let selected = current == Some(&Action::DeadKey { accent });
-            if ui.add(button(accent.to_string(), selected)).clicked() {
-                picked = Some(Action::DeadKey { accent });
-            }
-        }
-    });
-    ui.label(
-        RichText::new("Combinam com a próxima letra: ~ + a = ã. Com espaço, sai o acento sozinho.")
-            .size(11.5)
-            .color(theme::TEXT_FAINT),
-    );
-    ui.add_space(12.0);
-    theme::section(ui, "Caracteres");
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
-        for &c in CHARACTERS {
-            let selected = matches!(current, Some(Action::Text { text }) if text == c);
-            if ui.add(button(c.to_owned(), selected)).clicked() {
-                picked = Some(Action::Text { text: c.to_owned() });
-            }
-        }
-    });
-    picked
 }
 
 fn button_text(key: KeyCode, lang: Language) -> String {
@@ -535,16 +748,22 @@ fn button_text(key: KeyCode, lang: Language) -> String {
 fn describe_action(action: &Action, lang: Language) -> String {
     match action {
         Action::Key { to } => geometry::describe(*to, lang),
-        Action::Disabled => "desligada".to_owned(),
-        Action::Shortcut { .. } => format!("combinação {}", summary(action, lang)),
-        Action::Macro { steps } => format!("macro com {} passo(s)", steps.len()),
-        Action::Text { text } => format!("digita \"{}\"", text.lines().next().unwrap_or("")),
-        Action::DeadKey { accent } => format!("acento {accent} (combina com a próxima letra)"),
-        Action::Run { command, .. } => format!("abre {command}"),
+        Action::Disabled => "Desligada".to_owned(),
+        Action::Shortcut { .. } => format!("Combinação {}", summary(action, lang)),
+        Action::Macro { steps } => format!("Macro com {} passo(s)", steps.len()),
+        Action::Text { text } => format!("Digita \"{}\"", text.lines().next().unwrap_or("")),
+        Action::DeadKey { accent } => format!("Acento {accent} (combina com a próxima letra)"),
+        Action::Run { command, .. } => format!("Abre {command}"),
     }
 }
 
-fn apply_button(ui: &mut egui::Ui, enabled: bool) -> bool {
-    let button = theme::primary("Aplicar").min_size(vec2(110.0, 34.0));
-    ui.add_enabled(enabled, button).clicked()
+/// Corta textos que não cabem (`char_width` é a largura média de um caractere).
+fn fit(text: &str, width: f32, char_width: f32) -> String {
+    let max = (width / char_width).max(2.0) as usize;
+    if text.chars().count() <= max {
+        text.to_owned()
+    } else {
+        let cut: String = text.chars().take(max.saturating_sub(1)).collect();
+        format!("{cut}…")
+    }
 }

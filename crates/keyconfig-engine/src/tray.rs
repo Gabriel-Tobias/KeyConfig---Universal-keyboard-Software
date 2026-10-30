@@ -2,14 +2,19 @@
 
 use std::cell::RefCell;
 use std::mem::{size_of, zeroed};
-use std::ptr::null_mut;
+use std::ptr::{null, null_mut};
 
+use windows_sys::core::PCWSTR;
 use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_ERROR, NIIF_INFO,
     NIIF_WARNING, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::{LoadIconW, IDI_APPLICATION, WM_APP};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    GetSystemMetrics, LoadIconW, LoadImageW, HICON, IDI_APPLICATION, IMAGE_ICON, LR_DEFAULTCOLOR,
+    SM_CXSMICON, SM_CYSMICON, WM_APP,
+};
 
 use crate::util::copy_wide;
 
@@ -32,7 +37,7 @@ pub fn create(hwnd: HWND, tip: &str) {
     data.hWnd = hwnd;
     data.uID = 1;
     data.uCallbackMessage = WM_TRAY;
-    data.hIcon = unsafe { LoadIconW(null_mut(), IDI_APPLICATION) };
+    data.hIcon = load_icon();
     copy_wide(&mut data.szTip, tip);
     DATA.set(Some(data));
     show();
@@ -71,6 +76,26 @@ pub fn notify(kind: Notice, title: &str, text: &str) {
 pub fn remove() {
     if let Some(data) = DATA.take() {
         unsafe { Shell_NotifyIconW(NIM_DELETE, &data) };
+    }
+}
+
+/// Ícone do KeyConfig embutido no executável (recurso 1), no tamanho de ícone pequeno
+/// do sistema; se faltar, usa o genérico do Windows.
+fn load_icon() -> HICON {
+    unsafe {
+        let icon = LoadImageW(
+            GetModuleHandleW(null()),
+            1 as PCWSTR,
+            IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON),
+            GetSystemMetrics(SM_CYSMICON),
+            LR_DEFAULTCOLOR,
+        );
+        if icon.is_null() {
+            LoadIconW(null_mut(), IDI_APPLICATION)
+        } else {
+            icon as HICON
+        }
     }
 }
 

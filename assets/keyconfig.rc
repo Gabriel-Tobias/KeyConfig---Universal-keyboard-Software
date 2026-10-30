@@ -1,0 +1,3 @@
+// Recursos do Windows compartilhados pelos dois executáveis.
+// O id 1 é o ícone que o Explorer mostra e que o motor usa na bandeja.
+1 ICON "icon/keyconfig.ico"

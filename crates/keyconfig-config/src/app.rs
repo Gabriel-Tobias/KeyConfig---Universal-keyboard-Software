@@ -1,12 +1,15 @@
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, vec2, Align2, Color32, Margin, RichText, Sense, Stroke};
+use eframe::egui::{self, pos2, vec2, Align2, Color32, Margin, Rect, RichText, Sense, Stroke};
 use keyconfig_core::geometry;
 use keyconfig_core::store::{Settings, Store};
 use keyconfig_core::{KeyCode, Language, Layout, Profile};
 
 use crate::editor::Editor;
-use crate::theme::{self, ACCENT, BG, BORDER, CYAN, ERROR, OK, PANEL, SURFACE, SURFACE_HI, TEXT_DIM, TEXT_FAINT, WARN};
+use crate::theme::{
+    self, icon, Kind, ACCENT, BG, BORDER, CARD, CONTROL, CONTROL_BORDER, DANGER, OK, SIDEBAR, TEXT,
+    TEXT_DIM, TEXT_FAINT, TEXT_MUTED,
+};
 use crate::{capture, engine, keyboard};
 
 struct Item {
@@ -47,11 +50,19 @@ pub struct ConfigApp {
     /// contagem de toques de quando a captura começou.
     capturing_since: Option<u64>,
     brought_to_front: bool,
+    logo: Option<egui::TextureHandle>,
 }
 
 impl ConfigApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
+
+        let logo = eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon/icon-128.png"))
+            .ok()
+            .map(|icon| {
+                let image = egui::ColorImage::from_rgba_unmultiplied([icon.width as usize, icon.height as usize], &icon.rgba);
+                cc.egui_ctx.load_texture("logo", image, egui::TextureOptions::LINEAR)
+            });
 
         let mut app = ConfigApp {
             store: Store::open().map_err(|e| e.to_string()),
@@ -69,6 +80,7 @@ impl ConfigApp {
             allow_close: false,
             capturing_since: None,
             brought_to_front: false,
+            logo,
         };
         capture::install(cc);
         if let Err(e) = app.load() {
@@ -190,14 +202,17 @@ impl ConfigApp {
         self.set_status("Perfil excluído.", false);
     }
 
-    fn profiles_panel(&mut self, ui: &mut egui::Ui) {
-        brand(ui);
-        ui.add_space(22.0);
+    fn sidebar(&mut self, ui: &mut egui::Ui) {
+        self.brand(ui);
+        ui.add_space(24.0);
 
         ui.horizontal(|ui| {
             theme::section(ui, "Perfis");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("+ Novo").on_hover_text("Criar um perfil vazio").clicked() {
+                if theme::button(ui, Kind::Ghost, Some(icon::ADD), "Novo", true)
+                    .on_hover_text("Criar um perfil vazio")
+                    .clicked()
+                {
                     let current = &self.items[self.current].profile;
                     let mut profile = Profile::new("Novo perfil");
                     profile.layout = current.layout;
@@ -206,32 +221,32 @@ impl ConfigApp {
                 }
             });
         });
-        ui.add_space(6.0);
+        ui.add_space(4.0);
 
-        let list_height = (ui.available_height() - 210.0).max(80.0);
+        let list_height = (ui.available_height() - 140.0).max(80.0);
         egui::ScrollArea::vertical().max_height(list_height).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
             for i in 0..self.items.len() {
                 if self.profile_row(ui, i).clicked() && i != self.current {
                     self.current = i;
                     self.selected = None;
                 }
-                ui.add_space(4.0);
             }
             for (id, error) in &self.broken {
-                ui.label(RichText::new(format!("⚠ {id}.json com erro")).color(ERROR)).on_hover_text(error);
+                ui.label(RichText::new(format!("⚠ {id}.json com erro")).color(DANGER)).on_hover_text(error);
             }
         });
 
-        ui.add_space(8.0);
+        ui.add_space(6.0);
         ui.horizontal(|ui| {
-            if ui.button("Duplicar").clicked() {
+            let half = (ui.available_width() - 8.0) / 2.0;
+            if theme::button_with(ui, Kind::Ghost, Some(icon::COPY), "Duplicar", None, true, half).clicked() {
                 let mut profile = self.items[self.current].profile.clone();
                 profile.name = format!("{} (cópia)", profile.name);
                 self.add_profile(profile);
             }
             let can_delete = self.items.len() > 1;
-            if ui
-                .add_enabled(can_delete, egui::Button::new(RichText::new("Excluir").color(ERROR.gamma_multiply(0.9))))
+            if theme::button_with(ui, Kind::Danger, Some(icon::DELETE), "Excluir", None, can_delete, half)
                 .on_disabled_hover_text("É preciso ter pelo menos um perfil.")
                 .clicked()
             {
@@ -239,87 +254,106 @@ impl ConfigApp {
             }
         });
         if self.items[self.current].id != self.settings.active_profile {
-            ui.add_space(6.0);
-            let button = theme::primary("Usar este perfil").min_size(vec2(ui.available_width(), 34.0));
-            if ui.add(button).clicked() {
+            ui.add_space(4.0);
+            let width = ui.available_width();
+            if theme::button_with(ui, Kind::Primary, None, "Usar este perfil", None, true, width).clicked() {
                 self.activate_current();
             }
         }
 
         // Empurra o cartão do motor para o fim da barra (altura aproximada do cartão).
-        let card_height = if self.engine_running { 96.0 } else { 140.0 };
+        let card_height = if self.engine_running { 64.0 } else { 108.0 };
         ui.add_space((ui.available_height() - card_height).max(8.0));
         self.engine_card(ui);
+    }
+
+    fn brand(&self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            if let Some(logo) = &self.logo {
+                ui.add(egui::Image::new(logo).fit_to_exact_size(vec2(36.0, 36.0)));
+            }
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.label(RichText::new("Key").font(theme::bold(16.0)).color(Color32::WHITE));
+                    ui.label(RichText::new("Config").font(theme::bold(16.0)).color(ACCENT));
+                });
+                ui.label(RichText::new("TobieusCorp").size(12.0).color(TEXT_FAINT));
+            });
+        });
     }
 
     fn profile_row(&self, ui: &mut egui::Ui, i: usize) -> egui::Response {
         let item = &self.items[i];
         let selected = i == self.current;
         let active = item.id == self.settings.active_profile;
-        let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 52.0), Sense::click());
+        let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
         let painter = ui.painter();
 
         let fill = if selected {
-            SURFACE_HI
+            CONTROL
         } else if response.hovered() {
-            SURFACE
+            Color32::from_rgb(0x19, 0x1d, 0x25)
         } else {
             Color32::TRANSPARENT
         };
-        painter.rect(rect, 9.0, fill, if selected { Stroke::new(1.0_f32, BORDER) } else { Stroke::NONE });
-        if selected {
-            let bar = egui::Rect::from_min_size(rect.min + vec2(0.0, 12.0), vec2(3.0, rect.height() - 24.0));
-            painter.rect_filled(bar, 2.0, ACCENT);
-        }
+        painter.rect_filled(rect, 8.0, fill);
 
-        let name_color = if selected { Color32::WHITE } else { theme::TEXT };
-        painter.text(rect.min + vec2(14.0, 9.0), Align2::LEFT_TOP, &item.profile.name, theme::bold(14.5), name_color);
-        let detail = format!(
-            "{} · {} · {} tecla(s)",
-            item.profile.layout.label(),
-            short_language(item.profile.language),
-            item.profile.mappings.len()
-        );
-        painter.text(rect.min + vec2(14.0, 30.0), Align2::LEFT_TOP, detail, egui::FontId::proportional(11.5), TEXT_DIM);
-
-        let mut right = rect.right() - 10.0;
+        let mut x = rect.left() + 12.0;
         if active {
-            let text = "EM USO";
-            let galley = painter.layout_no_wrap(text.into(), theme::bold(9.5), OK);
-            let pill = egui::Rect::from_min_size(
-                egui::pos2(right - galley.size().x - 14.0, rect.top() + 10.0),
-                galley.size() + vec2(14.0, 4.0),
-            );
-            painter.rect_filled(pill, 99.0, OK.gamma_multiply(0.16));
-            painter.galley(pill.min + vec2(7.0, 2.0), galley, OK);
-            right = pill.left() - 6.0;
+            painter.circle_filled(pos2(x + 4.0, rect.center().y), 4.0, OK);
+            x += 18.0;
         }
+        let color = if selected { Color32::WHITE } else { TEXT_DIM };
+        let name = painter.layout_no_wrap(item.profile.name.clone(), theme::semibold(14.0), color);
+        painter.galley(pos2(x, rect.center().y - name.size().y / 2.0), name.clone(), color);
+        x += name.size().x + 8.0;
         if item.dirty() {
-            painter.circle_filled(egui::pos2(right - 4.0, rect.top() + 17.0), 3.5, WARN);
+            painter.circle_filled(pos2(x, rect.center().y), 3.0, ACCENT);
+        }
+
+        if active {
+            let galley = painter.layout_no_wrap("Em uso".to_owned(), theme::medium(11.0), OK);
+            let pill = Rect::from_min_size(
+                pos2(rect.right() - galley.size().x - 16.0 - 10.0, rect.center().y - galley.size().y / 2.0 - 3.0),
+                galley.size() + vec2(16.0, 6.0),
+            );
+            painter.rect_filled(pill, 99.0, OK.gamma_multiply(0.12));
+            painter.galley(pill.min + vec2(8.0, 3.0), galley, OK);
         }
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     }
 
     fn engine_card(&mut self, ui: &mut egui::Ui) {
-        theme::card().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.vertical(|ui| {
+        egui::Frame::none()
+            .fill(CARD)
+            .stroke(Stroke::new(1.0_f32, BORDER))
+            .rounding(10.0)
+            .inner_margin(Margin::same(12.0))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
                 let (color, title, detail) = if self.engine_running {
-                    (OK, "Motor ativo", "Seus mapeamentos estão funcionando.")
+                    (OK, "Motor ativo", "Remapeamento ligado")
                 } else {
-                    (ERROR, "Motor parado", "As teclas não estão sendo remapeadas.")
+                    (DANGER, "Motor parado", "Remapeamento desligado")
                 };
                 ui.horizontal(|ui| {
-                    let (dot, _) = ui.allocate_exact_size(vec2(10.0, 18.0), Sense::hover());
-                    ui.painter().circle_filled(dot.center(), 4.5, color);
-                    ui.painter().circle_stroke(dot.center(), 7.0, Stroke::new(2.0_f32, color.gamma_multiply(0.25)));
-                    ui.label(RichText::new(title).font(theme::bold(14.0)).color(color));
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    let (dot, _) = ui.allocate_exact_size(vec2(18.0, 36.0), Sense::hover());
+                    ui.painter().circle_filled(dot.center(), 9.0, color.gamma_multiply(0.15));
+                    ui.painter().circle_filled(dot.center(), 5.0, color);
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        ui.label(RichText::new(title).font(theme::semibold(13.0)).color(TEXT));
+                        ui.label(RichText::new(detail).size(12.0).color(TEXT_FAINT));
+                    });
                 });
-                ui.label(RichText::new(detail).size(12.0).color(TEXT_DIM));
                 if !self.engine_running {
                     ui.add_space(4.0);
-                    let button = theme::primary("Iniciar motor").min_size(vec2(ui.available_width(), 32.0));
-                    if ui.add(button).clicked() {
+                    let width = ui.available_width();
+                    if theme::button_with(ui, Kind::Primary, None, "Iniciar motor", None, true, width).clicked() {
                         match engine::launch() {
                             Ok(()) => self.set_status("Motor iniciado.", false),
                             Err(e) => self.set_status(format!("Não foi possível iniciar o motor: {e}"), true),
@@ -327,56 +361,48 @@ impl ConfigApp {
                     }
                 }
             });
-        });
     }
 
-    fn top_bar(&mut self, ui: &mut egui::Ui) {
+    fn header(&mut self, ui: &mut egui::Ui) {
         let dirty = self.any_dirty();
         let mut save = false;
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
             let profile = &mut self.items[self.current].profile;
-            ui.vertical(|ui| {
-                theme::section(ui, "Perfil");
-                ui.add(
-                    egui::TextEdit::singleline(&mut profile.name)
-                        .font(theme::bold(22.0))
-                        .frame(false)
-                        .desired_width(260.0)
-                        .hint_text("Nome do perfil"),
-                )
-                .on_hover_text("Clique para renomear");
-            });
-            ui.add_space(16.0);
 
-            ui.vertical(|ui| {
-                theme::section(ui, "Formato");
-                egui::ComboBox::from_id_salt("layout")
-                    .width(150.0)
-                    .selected_text(profile.layout.label())
-                    .show_ui(ui, |ui| {
-                        for layout in Layout::ALL {
-                            ui.selectable_value(&mut profile.layout, layout, layout.label());
-                        }
-                    });
-            });
+            theme::field_label(ui, "Nome");
+            ui.add(
+                egui::TextEdit::singleline(&mut profile.name)
+                    .desired_width(180.0)
+                    .margin(Margin::symmetric(12.0, 9.0))
+                    .font(theme::medium(13.0)),
+            );
             ui.add_space(8.0);
-            ui.vertical(|ui| {
-                theme::section(ui, "Idioma");
-                egui::ComboBox::from_id_salt("language")
-                    .width(210.0)
-                    .selected_text(profile.language.label())
-                    .show_ui(ui, |ui| {
-                        for language in Language::ALL {
-                            ui.selectable_value(&mut profile.language, language, language.label());
-                        }
-                    });
-            });
+            theme::field_label(ui, "Formato");
+            egui::ComboBox::from_id_salt("layout")
+                .width(130.0)
+                .selected_text(RichText::new(profile.layout.label()).font(theme::semibold(13.0)))
+                .show_ui(ui, |ui| {
+                    for layout in Layout::ALL {
+                        ui.selectable_value(&mut profile.layout, layout, layout.label());
+                    }
+                });
+            ui.add_space(8.0);
+            theme::field_label(ui, "Idioma");
+            egui::ComboBox::from_id_salt("language")
+                .width(220.0)
+                .selected_text(RichText::new(profile.language.label()).font(theme::semibold(13.0)))
+                .show_ui(ui, |ui| {
+                    for language in Language::ALL {
+                        ui.selectable_value(&mut profile.language, language, language.label());
+                    }
+                });
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let button = theme::primary("Salvar").min_size(vec2(110.0, 36.0));
-                save = ui.add_enabled(dirty, button).on_hover_text("Ctrl+S").clicked();
+                ui.spacing_mut().item_spacing.x = 12.0;
+                save = theme::button_with(ui, Kind::Primary, None, "Salvar", Some("Ctrl+S"), dirty, 0.0).clicked();
                 if dirty {
-                    theme::pill(ui, "NÃO SALVO", WARN);
+                    ui.label(RichText::new("Alterações não salvas").size(12.0).color(ACCENT));
                 }
             });
         });
@@ -385,7 +411,7 @@ impl ConfigApp {
         }
     }
 
-    fn keyboard_area(&mut self, ui: &mut egui::Ui) {
+    fn keyboard_section(&mut self, ui: &mut egui::Ui) {
         let profile = &self.items[self.current].profile;
         let lang = profile.language;
         let keys = capture::snapshot();
@@ -397,70 +423,82 @@ impl ConfigApp {
             }
         }
 
-        let height = ui.available_height() - 56.0;
-        ui.allocate_ui(vec2(ui.available_width(), height), |ui| {
-            ui.add_space(14.0);
-            if let Some(key) = keyboard::show(ui, profile, self.selected, &keys.held) {
+        // Largura comum do teclado e da barra embaixo dele, centralizados.
+        let width = keyboard::natural_width(profile).min(ui.available_width()).max(640.0);
+        let left = ((ui.available_width() - width) / 2.0).max(0.0);
+        ui.horizontal(|ui| {
+            ui.add_space(left);
+            if let Some(key) = keyboard::show(ui, profile, self.selected, &keys.held, width) {
                 self.selected = Some(key);
                 self.capturing_since = None;
             }
         });
+        ui.add_space(18.0);
 
         // Teclas que não aparecem no desenho deste formato (F13+, mídia, numpad no 75%...).
         let visible: Vec<KeyCode> = geometry::keys(profile.layout, lang).iter().map(|k| k.code).collect();
         let hidden: Vec<KeyCode> = KeyCode::ALL.iter().copied().filter(|k| !visible.contains(k)).collect();
 
         ui.horizontal(|ui| {
-            if self.capturing_since.is_some() {
-                if ui.button("Cancelar").clicked() {
-                    self.capturing_since = None;
-                }
-                ui.label(
-                    RichText::new("Aperte no seu teclado a tecla que você quer mapear…")
-                        .font(theme::bold(14.0))
-                        .color(CYAN),
-                );
-            } else {
-                if ui
-                    .add(theme::primary("⌨  Capturar tecla"))
-                    .on_hover_text("Clique e aperte uma tecla no seu teclado para selecioná-la aqui.")
-                    .clicked()
-                {
-                    self.capturing_since = Some(keys.presses);
+            ui.add_space(left);
+            ui.allocate_ui_with_layout(vec2(width, 36.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 14.0;
+                if self.capturing_since.is_some() {
+                    if theme::button(ui, Kind::Primary, Some(icon::TARGET), "Cancelar captura", true).clicked() {
+                        self.capturing_since = None;
+                    }
+                    ui.label(RichText::new("Aperte no seu teclado a tecla que você quer mapear…").color(ACCENT));
+                } else {
+                    if theme::button(ui, Kind::Normal, Some(icon::TARGET), "Capturar tecla", true)
+                        .on_hover_text("Clique e aperte uma tecla no seu teclado para selecioná-la aqui.")
+                        .clicked()
+                    {
+                        self.capturing_since = Some(keys.presses);
+                    }
+                    if let Some(k) = keys.last {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            ui.label(RichText::new("Última tecla").color(TEXT_DIM));
+                            key_tag(ui, &geometry::describe(k, lang));
+                        });
+                    }
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        theme::field_label(ui, "Outras teclas");
+                        egui::ComboBox::from_id_salt("hidden_keys")
+                            .width(160.0)
+                            .selected_text(match self.selected {
+                                Some(k) if hidden.contains(&k) => geometry::describe(k, lang),
+                                _ => "Escolher…".to_owned(),
+                            })
+                            .show_ui(ui, |ui| {
+                                for &k in &hidden {
+                                    let mark = if profile.mappings.contains_key(&k) { "● " } else { "" };
+                                    let label = format!("{mark}{}", geometry::describe(k, lang));
+                                    if ui.selectable_label(self.selected == Some(k), label).clicked() {
+                                        self.selected = Some(k);
+                                    }
+                                }
+                            });
+                    });
                 }
 
-                egui::ComboBox::from_id_salt("hidden_keys")
-                    .width(180.0)
-                    .selected_text(match self.selected {
-                        Some(k) if hidden.contains(&k) => geometry::describe(k, lang),
-                        _ => "Outras teclas…".to_owned(),
-                    })
-                    .show_ui(ui, |ui| {
-                        for &k in &hidden {
-                            let mark = if profile.mappings.contains_key(&k) { "● " } else { "" };
-                            let label = format!("{mark}{}", geometry::describe(k, lang));
-                            if ui.selectable_label(self.selected == Some(k), label).clicked() {
-                                self.selected = Some(k);
-                            }
-                        }
-                    })
-                    .response
-                    .on_hover_text("Teclas que não estão no desenho, como F13–F24 e mídia.");
-
-                if let Some(k) = keys.last {
-                    let place = if hidden.contains(&k) { " · em Outras teclas" } else { "" };
-                    ui.label(
-                        RichText::new(format!("Última tecla: {}{place}", geometry::describe(k, lang)))
-                            .color(TEXT_DIM),
-                    );
-                }
-            }
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                legend(ui, "Apertada", keyboard::PRESSED);
-                legend(ui, "Selecionada", CYAN);
-                legend(ui, "Mapeada", keyboard::MAPPED);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 16.0;
+                    legend(ui, "Apertada", Legend::Pressed);
+                    legend(ui, "Desligada", Legend::Off);
+                    legend(ui, "Selecionada", Legend::Selected);
+                    legend(ui, "Remapeada", Legend::Remapped);
+                });
             });
+        });
+        ui.horizontal(|ui| {
+            ui.add_space(left);
+            ui.label(
+                RichText::new("Use “Outras teclas” para o que não aparece no desenho, como F13–F24 e teclas de mídia.")
+                    .size(12.0)
+                    .color(TEXT_FAINT),
+            );
         });
     }
 
@@ -471,20 +509,24 @@ impl ConfigApp {
             return;
         }
         let fade = ((5.0 - age) / 0.5).clamp(0.0, 1.0);
-        let color = if status.error { ERROR } else { OK };
+        let color = if status.error { DANGER } else { OK };
         egui::Area::new(egui::Id::new("toast"))
-            .anchor(Align2::CENTER_TOP, vec2(0.0, 84.0))
+            .anchor(Align2::RIGHT_BOTTOM, vec2(-28.0, -28.0))
             .interactable(false)
+            .order(egui::Order::Tooltip)
             .show(ctx, |ui| {
                 egui::Frame::none()
-                    .fill(theme::SURFACE.gamma_multiply(fade))
-                    .stroke(Stroke::new(1.0_f32, color.gamma_multiply(0.6 * fade)))
+                    .fill(CARD.gamma_multiply(fade))
+                    .stroke(Stroke::new(1.0_f32, BORDER.gamma_multiply(fade)))
                     .rounding(10.0)
-                    .shadow(egui::Shadow { offset: vec2(0.0, 6.0), blur: 18.0, spread: 0.0, color: Color32::from_black_alpha((120.0 * fade) as u8) })
-                    .inner_margin(Margin::symmetric(16.0, 10.0))
+                    .shadow(egui::Shadow { offset: vec2(0.0, 10.0), blur: 30.0, spread: 0.0, color: Color32::from_black_alpha((120.0 * fade) as u8) })
+                    .inner_margin(Margin::symmetric(14.0, 10.0))
                     .show(ui, |ui| {
-                        let icon = if status.error { "✖" } else { "✔" };
-                        ui.label(RichText::new(format!("{icon}  {}", status.text)).color(color.gamma_multiply(fade)));
+                        ui.horizontal(|ui| {
+                            let (dot, _) = ui.allocate_exact_size(vec2(10.0, 16.0), Sense::hover());
+                            ui.painter().circle_filled(dot.center(), 4.0, color.gamma_multiply(fade));
+                            ui.label(RichText::new(&status.text).color(TEXT.gamma_multiply(fade)));
+                        });
                     });
             });
         ctx.request_repaint_after(Duration::from_millis(50));
@@ -494,15 +536,14 @@ impl ConfigApp {
         if self.confirm_delete {
             let name = self.items[self.current].profile.name.clone();
             modal(ctx, "Excluir perfil", |ui| {
-                ui.label(format!("Excluir o perfil \"{name}\"? Isso não pode ser desfeito."));
-                ui.add_space(12.0);
+                ui.label(RichText::new(format!("Excluir o perfil \"{name}\"? Isso não pode ser desfeito.")).color(TEXT_DIM));
+                ui.add_space(16.0);
                 ui.horizontal(|ui| {
-                    let delete = theme::primary("Excluir").fill(ERROR.gamma_multiply(0.85));
-                    if ui.add(delete).clicked() {
+                    if theme::button(ui, Kind::Danger, Some(icon::DELETE), "Excluir", true).clicked() {
                         self.confirm_delete = false;
                         self.delete_current();
                     }
-                    if ui.button("Cancelar").clicked() {
+                    if theme::button(ui, Kind::Ghost, None, "Cancelar", true).clicked() {
                         self.confirm_delete = false;
                     }
                 });
@@ -511,10 +552,10 @@ impl ConfigApp {
 
         if self.confirm_close {
             modal(ctx, "Alterações não salvas", |ui| {
-                ui.label("Existem alterações que ainda não foram salvas.");
-                ui.add_space(12.0);
+                ui.label(RichText::new("Existem alterações que ainda não foram salvas.").color(TEXT_DIM));
+                ui.add_space(16.0);
                 ui.horizontal(|ui| {
-                    if ui.add(theme::primary("Salvar e sair")).clicked() {
+                    if theme::button(ui, Kind::Primary, None, "Salvar e sair", true).clicked() {
                         self.save_all();
                         if !self.any_dirty() {
                             self.allow_close = true;
@@ -522,11 +563,11 @@ impl ConfigApp {
                         }
                         self.confirm_close = false;
                     }
-                    if ui.button("Sair sem salvar").clicked() {
+                    if theme::button(ui, Kind::Ghost, None, "Sair sem salvar", true).clicked() {
                         self.allow_close = true;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
-                    if ui.button("Cancelar").clicked() {
+                    if theme::button(ui, Kind::Ghost, None, "Cancelar", true).clicked() {
                         self.confirm_close = false;
                     }
                 });
@@ -568,61 +609,89 @@ impl eframe::App for ConfigApp {
             self.confirm_close = true;
         }
 
-        let frame = |fill, x: f32, y: f32| egui::Frame::none().fill(fill).inner_margin(Margin::symmetric(x, y));
-
-        egui::SidePanel::left("profiles")
+        egui::SidePanel::left("sidebar")
             .resizable(false)
             .exact_width(260.0)
-            .frame(frame(PANEL, 16.0, 18.0).stroke(Stroke::new(1.0_f32, BORDER)))
-            .show(ctx, |ui| self.profiles_panel(ui));
-
-        egui::TopBottomPanel::top("top")
-            .frame(frame(BG, 24.0, 16.0))
             .show_separator_line(false)
-            .show(ctx, |ui| self.top_bar(ui));
+            .frame(
+                egui::Frame::none()
+                    .fill(SIDEBAR)
+                    .inner_margin(Margin::symmetric(16.0, 20.0))
+                    .stroke(Stroke::new(1.0_f32, BORDER)),
+            )
+            .show(ctx, |ui| self.sidebar(ui));
 
-        egui::TopBottomPanel::bottom("editor")
-            .resizable(true)
-            .default_height(400.0)
-            .min_height(220.0)
-            .frame(frame(PANEL, 24.0, 16.0).stroke(Stroke::new(1.0_f32, BORDER)))
+        egui::TopBottomPanel::top("header")
+            .show_separator_line(false)
+            .frame(egui::Frame::none().fill(BG).inner_margin(Margin::symmetric(28.0, 16.0)))
             .show(ctx, |ui| {
-                let item = &mut self.items[self.current];
-                self.editor.show(ui, &item.id, &mut item.profile, self.selected);
+                self.header(ui);
+                // Linha divisória embaixo do cabeçalho, de ponta a ponta (fora da margem interna).
+                let r = ui.min_rect().expand2(vec2(28.0, 16.0));
+                let painter = ui.painter().clone().with_clip_rect(r.expand(1.0));
+                painter.hline(r.x_range(), r.bottom() - 0.5, Stroke::new(1.0_f32, BORDER));
             });
 
         egui::CentralPanel::default()
-            .frame(frame(BG, 24.0, 4.0))
-            .show(ctx, |ui| self.keyboard_area(ui));
+            .frame(egui::Frame::none().fill(BG))
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                    egui::Frame::none().inner_margin(Margin::same(28.0)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        self.keyboard_section(ui);
+                        ui.add_space(28.0);
+                        let item = &mut self.items[self.current];
+                        self.editor.show(ui, &item.id, &mut item.profile, self.selected);
+                    });
+                });
+            });
 
         self.dialogs(ctx);
         self.status_toast(ctx);
     }
 }
 
-/// Cabeçalho da barra lateral com o nome do app nas cores do logo.
-fn brand(ui: &mut egui::Ui) {
+enum Legend {
+    Remapped,
+    Selected,
+    Off,
+    Pressed,
+}
+
+fn legend(ui: &mut egui::Ui, text: &str, kind: Legend) {
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        ui.label(RichText::new("Key").font(theme::bold(26.0)).color(Color32::WHITE));
-        ui.label(RichText::new("config").font(theme::bold(26.0)).color(ACCENT));
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let (rect, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
+        let painter = ui.painter();
+        match kind {
+            Legend::Remapped => {
+                painter.circle_filled(rect.center(), 4.0, ACCENT);
+            }
+            Legend::Selected => {
+                painter.rect_stroke(rect.shrink(1.0), 3.0, Stroke::new(2.0_f32, ACCENT));
+            }
+            Legend::Off => {
+                let points = vec![rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()];
+                painter.extend(egui::Shape::dashed_line(&points, Stroke::new(1.0_f32, TEXT_MUTED), 2.0, 2.0));
+            }
+            Legend::Pressed => {
+                painter.rect(rect.shrink(1.0), 3.0, keyboard::PRESSED.gamma_multiply(0.3), Stroke::new(1.0_f32, keyboard::PRESSED));
+            }
+        }
+        ui.label(RichText::new(text).size(12.0).color(TEXT_DIM));
     });
-    ui.label(RichText::new("Universal Keyboard Software").size(11.5).color(TEXT_FAINT));
 }
 
-fn legend(ui: &mut egui::Ui, text: &str, color: Color32) {
-    ui.label(RichText::new(text).size(12.0).color(TEXT_DIM));
-    let (rect, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
-    ui.painter().rect(rect, 3.0, color.gamma_multiply(0.6), Stroke::new(1.5_f32, color));
-    ui.add_space(8.0);
-}
-
-fn short_language(language: Language) -> &'static str {
-    match language {
-        Language::PtBrAbnt2 => "ABNT2",
-        Language::EnUs => "US",
-        Language::EnUsIntl => "US-Intl",
-    }
+/// Nome de tecla em destaque, como `PgDn` na barra embaixo do teclado.
+fn key_tag(ui: &mut egui::Ui, text: &str) {
+    egui::Frame::none()
+        .fill(CONTROL)
+        .stroke(Stroke::new(1.0_f32, CONTROL_BORDER))
+        .rounding(6.0)
+        .inner_margin(Margin::symmetric(8.0, 3.0))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).font(theme::mono_medium(13.0)).color(TEXT));
+        });
 }
 
 fn modal(ctx: &egui::Context, title: &str, contents: impl FnOnce(&mut egui::Ui)) {
@@ -632,13 +701,13 @@ fn modal(ctx: &egui::Context, title: &str, contents: impl FnOnce(&mut egui::Ui))
         .fixed_pos(screen.min)
         .order(egui::Order::Middle)
         .show(ctx, |ui| {
-            ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha(150));
+            ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha(160));
         });
-    egui::Window::new(RichText::new(title).font(theme::bold(16.0)))
+    egui::Window::new(RichText::new(title).font(theme::semibold(16.0)).color(TEXT))
         .collapsible(false)
         .resizable(false)
         .order(egui::Order::Foreground)
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-        .frame(egui::Frame::window(&ctx.style()).inner_margin(Margin::same(20.0)))
+        .frame(egui::Frame::window(&ctx.style()).inner_margin(Margin::same(24.0)))
         .show(ctx, contents);
 }
