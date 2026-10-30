@@ -1,16 +1,94 @@
 //! Envio de teclas e texto ao Windows via `SendInput`.
 
 use std::mem::size_of;
+use std::sync::atomic::{AtomicU8, Ordering};
 
-use keyconfig_core::{KeyCode, KeyOutput};
+use keyconfig_core::{KeyCode, KeyOutput, Modifier, Mods};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, KEYEVENTF_UNICODE,
-    MAPVK_VK_TO_VSC,
+    GetAsyncKeyState, MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+    KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE,
+    KEYEVENTF_UNICODE, MAPVK_VK_TO_VSC,
 };
 
 /// Marca as teclas que nós mesmos enviamos, para o hook não processá-las de novo.
 pub use keyconfig_core::ipc::INJECT_TAG;
+
+/// Os oito modificadores, um por bit nas máscaras abaixo: virtual-key, tecla e tipo.
+const SIDES: [(i32, KeyCode, Modifier); 8] = [
+    (0xA2, KeyCode::ControlLeft, Modifier::Ctrl),
+    (0xA3, KeyCode::ControlRight, Modifier::Ctrl),
+    (0xA0, KeyCode::ShiftLeft, Modifier::Shift),
+    (0xA1, KeyCode::ShiftRight, Modifier::Shift),
+    (0xA4, KeyCode::AltLeft, Modifier::Alt),
+    (0xA5, KeyCode::AltRight, Modifier::Alt),
+    (0x5B, KeyCode::MetaLeft, Modifier::Win),
+    (0x5C, KeyCode::MetaRight, Modifier::Win),
+];
+/// Alt e Win: soltos sozinhos, abrem o menu da janela ou o Iniciar.
+const MENU_SIDES: u8 = 0xF0;
+/// Tecla sem uso que, enviada entre o aperto e a soltura de Alt/Win, impede o menu de abrir.
+const MASK_VK: u16 = 0xE8;
+
+/// Modificadores que o usuário segura de verdade (o hook atualiza a cada evento físico).
+static PHYSICAL: AtomicU8 = AtomicU8::new(0);
+
+pub fn track_physical(code: KeyCode, up: bool) {
+    if let Some(i) = SIDES.iter().position(|s| s.1 == code) {
+        if up {
+            PHYSICAL.fetch_and(!(1 << i), Ordering::Relaxed);
+        } else {
+            PHYSICAL.fetch_or(1 << i, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Modificadores ativos agora para o Windows (inclui os de teclas remapeadas).
+pub fn mods_down() -> Mods {
+    let mut mods = Mods::NONE;
+    for (vk, _, m) in SIDES {
+        if unsafe { GetAsyncKeyState(vk) } < 0 {
+            mods.set(m, true);
+        }
+    }
+    mods
+}
+
+/// Quais lados destes modificadores estão apertados agora.
+pub fn held_sides(mods: Mods) -> u8 {
+    SIDES
+        .iter()
+        .enumerate()
+        .filter(|(_, &(vk, _, m))| mods.has(m) && unsafe { GetAsyncKeyState(vk) } < 0)
+        .fold(0, |bits, (i, _)| bits | 1 << i)
+}
+
+/// Solta os modificadores do gatilho, para a ação não sair com eles (Shift + `?` etc.).
+pub fn release(sides: u8) {
+    let mut inputs = Vec::new();
+    if sides & MENU_SIDES != 0 {
+        inputs.extend(mask());
+    }
+    inputs.extend(keys_of(sides).map(|k| key(k, true)));
+    send(&inputs);
+}
+
+/// Aperta de novo os modificadores soltos por [`release`] que o usuário ainda segura.
+pub fn restore(sides: u8) {
+    let back = sides & PHYSICAL.load(Ordering::Relaxed);
+    let mut inputs: Vec<_> = keys_of(back).map(|k| key(k, false)).collect();
+    if back & MENU_SIDES != 0 {
+        inputs.extend(mask());
+    }
+    send(&inputs);
+}
+
+fn keys_of(sides: u8) -> impl Iterator<Item = KeyCode> {
+    SIDES.iter().enumerate().filter(move |(i, _)| sides & 1 << i != 0).map(|(_, s)| s.1)
+}
+
+fn mask() -> [INPUT; 2] {
+    [raw(MASK_VK, 0, 0), raw(MASK_VK, 0, KEYEVENTF_KEYUP)]
+}
 
 pub fn key(code: KeyCode, up: bool) -> INPUT {
     let (vk, scan, mut flags) = match code.output() {

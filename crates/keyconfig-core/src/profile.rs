@@ -117,6 +117,116 @@ pub enum MacroStep {
     Text(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Modifier {
+    Ctrl,
+    Shift,
+    Alt,
+    Win,
+}
+
+impl Modifier {
+    pub const ALL: [Modifier; 4] = [Modifier::Ctrl, Modifier::Shift, Modifier::Alt, Modifier::Win];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Modifier::Ctrl => "Ctrl",
+            Modifier::Shift => "Shift",
+            Modifier::Alt => "Alt",
+            Modifier::Win => "Win",
+        }
+    }
+}
+
+/// Modificadores segurados, sem distinguir o lado. No JSON: `["ctrl", "shift"]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize)]
+#[serde(from = "Vec<Modifier>", into = "Vec<Modifier>")]
+pub struct Mods(u8);
+
+impl Mods {
+    pub const NONE: Mods = Mods(0);
+
+    pub fn has(self, m: Modifier) -> bool {
+        self.0 & (1 << m as u8) != 0
+    }
+
+    pub fn set(&mut self, m: Modifier, on: bool) {
+        if on {
+            self.0 |= 1 << m as u8;
+        } else {
+            self.0 &= !(1 << m as u8);
+        }
+    }
+
+    pub fn with(mut self, m: Modifier) -> Mods {
+        self.set(m, true);
+        self
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn iter(self) -> impl Iterator<Item = Modifier> {
+        Modifier::ALL.into_iter().filter(move |&m| self.has(m))
+    }
+}
+
+impl From<Vec<Modifier>> for Mods {
+    fn from(list: Vec<Modifier>) -> Self {
+        list.into_iter().fold(Mods::NONE, Mods::with)
+    }
+}
+
+impl From<Mods> for Vec<Modifier> {
+    fn from(mods: Mods) -> Self {
+        mods.iter().collect()
+    }
+}
+
+/// Quando uma ação dispara: com quais modificadores e se pede toque duplo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Trigger {
+    pub mods: Mods,
+    pub double_tap: bool,
+}
+
+impl Trigger {
+    /// Toque simples, com ou sem modificadores: o mapeamento comum da tecla.
+    pub const PLAIN: Trigger = Trigger { mods: Mods::NONE, double_tap: false };
+
+    pub fn is_plain(self) -> bool {
+        self == Trigger::PLAIN
+    }
+
+    /// "Shift + 2×", para mostrar ao usuário. Vazio no gatilho comum.
+    pub fn label(self) -> String {
+        let mut parts: Vec<&str> = self.mods.iter().map(Modifier::label).collect();
+        if self.double_tap {
+            parts.push("2×");
+        }
+        parts.join(" + ")
+    }
+}
+
+/// Ação que só vale com modificadores e/ou toque duplo, como `Shift` + `;` `;` = `?`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Combo {
+    pub key: KeyCode,
+    #[serde(default, skip_serializing_if = "Mods::is_empty")]
+    pub mods: Mods,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub double_tap: bool,
+    pub action: Action,
+}
+
+impl Combo {
+    pub fn trigger(&self) -> Trigger {
+        Trigger { mods: self.mods, double_tap: self.double_tap }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,
@@ -124,8 +234,11 @@ pub struct Profile {
     pub layout: Layout,
     #[serde(default)]
     pub language: Language,
+    /// Toque simples. Vale também com modificadores, se não houver um combo para eles.
     #[serde(default)]
     pub mappings: BTreeMap<KeyCode, Action>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub combos: Vec<Combo>,
 }
 
 impl Profile {
@@ -135,7 +248,46 @@ impl Profile {
             layout: Layout::default(),
             language: Language::default(),
             mappings: BTreeMap::new(),
+            combos: Vec::new(),
         }
+    }
+
+    pub fn action(&self, key: KeyCode, trigger: Trigger) -> Option<&Action> {
+        if trigger.is_plain() {
+            return self.mappings.get(&key);
+        }
+        self.combos
+            .iter()
+            .find(|c| c.key == key && c.trigger() == trigger)
+            .map(|c| &c.action)
+    }
+
+    /// Define (ou, com `None`, remove) a ação da tecla para este gatilho.
+    pub fn set_action(&mut self, key: KeyCode, trigger: Trigger, action: Option<Action>) {
+        if trigger.is_plain() {
+            match action {
+                Some(a) => self.mappings.insert(key, a),
+                None => self.mappings.remove(&key),
+            };
+            return;
+        }
+        let pos = self.combos.iter().position(|c| c.key == key && c.trigger() == trigger);
+        match (pos, action) {
+            (Some(i), Some(a)) => self.combos[i].action = a,
+            (Some(i), None) => {
+                self.combos.remove(i);
+            }
+            (None, Some(a)) => {
+                self.combos.push(Combo { key, mods: trigger.mods, double_tap: trigger.double_tap, action: a });
+                self.combos.sort_by_key(|c| (c.key, c.trigger()));
+            }
+            (None, None) => {}
+        }
+    }
+
+    /// Gatilhos especiais (não comuns) que a tecla tem.
+    pub fn combo_triggers(&self, key: KeyCode) -> Vec<Trigger> {
+        self.combos.iter().filter(|c| c.key == key).map(Combo::trigger).collect()
     }
 }
 
@@ -218,7 +370,41 @@ mod tests {
     fn round_trips() {
         let mut profile = Profile::new("Teste");
         profile.mappings.insert(KeyCode::KeyA, Action::Key { to: KeyCode::KeyB });
+        let shift_double = Trigger { mods: Mods::NONE.with(Modifier::Shift), double_tap: true };
+        profile.set_action(KeyCode::Slash, shift_double, Some(Action::Text { text: "?".into() }));
         let json = serde_json::to_string(&profile).unwrap();
         assert_eq!(serde_json::from_str::<Profile>(&json).unwrap(), profile);
+    }
+
+    #[test]
+    fn parses_combos() {
+        let json = r#"{
+            "name": "Combos",
+            "combos": [
+                { "key": "Slash", "mods": ["shift"], "double_tap": true, "action": { "type": "text", "text": "?" } },
+                { "key": "KeyJ", "mods": ["ctrl", "alt"], "action": { "type": "disabled" } }
+            ]
+        }"#;
+        let profile: Profile = serde_json::from_str(json).unwrap();
+        let shift_double = Trigger { mods: Mods::NONE.with(Modifier::Shift), double_tap: true };
+        assert_eq!(profile.action(KeyCode::Slash, shift_double), Some(&Action::Text { text: "?".into() }));
+        assert_eq!(profile.action(KeyCode::Slash, Trigger::PLAIN), None);
+        let ctrl_alt = Trigger { mods: Mods::NONE.with(Modifier::Alt).with(Modifier::Ctrl), double_tap: false };
+        assert_eq!(profile.action(KeyCode::KeyJ, ctrl_alt), Some(&Action::Disabled));
+        assert_eq!(ctrl_alt.label(), "Ctrl + Alt");
+    }
+
+    #[test]
+    fn set_action_adds_replaces_and_removes() {
+        let mut profile = Profile::new("x");
+        let double = Trigger { mods: Mods::NONE, double_tap: true };
+        profile.set_action(KeyCode::KeyA, double, Some(Action::Disabled));
+        profile.set_action(KeyCode::KeyA, double, Some(Action::Text { text: "a".into() }));
+        assert_eq!(profile.combos.len(), 1);
+        assert_eq!(profile.combo_triggers(KeyCode::KeyA), vec![double]);
+        profile.set_action(KeyCode::KeyA, double, None);
+        assert!(profile.combos.is_empty());
+        profile.set_action(KeyCode::KeyA, Trigger::PLAIN, Some(Action::Disabled));
+        assert_eq!(profile.mappings[&KeyCode::KeyA], Action::Disabled);
     }
 }

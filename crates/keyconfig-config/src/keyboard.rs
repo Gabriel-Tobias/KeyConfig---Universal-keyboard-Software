@@ -109,6 +109,7 @@ pub fn show(
             pressed: pressed.contains(&key.code),
             modifier: is_modifier(key.code),
             action,
+            combos: profile.combos.iter().any(|c| c.key == key.code),
         };
         draw_key(&painter, key, &parts, &state, profile.language, scale);
         if hovered && response.clicked() {
@@ -149,6 +150,8 @@ struct KeyState<'a> {
     pressed: bool,
     modifier: bool,
     action: Option<&'a Action>,
+    /// Tem ações com modificadores ou toque duplo.
+    combos: bool,
 }
 
 fn draw_key(painter: &Painter, key: &KeyRect, parts: &[Rect], s: &KeyState, language: Language, scale: f32) {
@@ -194,6 +197,11 @@ fn draw_key(painter: &Painter, key: &KeyRect, parts: &[Rect], s: &KeyState, lang
         keycap(painter, &parts, fill, border, scale)
     };
 
+    // Pontinho âmbar no canto, marcando que a tecla foi remapeada (em algum gatilho).
+    if remapped || s.combos {
+        painter.circle_filled(pos2(parts[0].right() - 7.5 * scale, parts[0].top() + 7.5 * scale), 2.5 * scale, ACCENT);
+    }
+
     let label = match geometry::label(key.code, language) {
         "" => geometry::space_name(),
         l => l,
@@ -219,8 +227,6 @@ fn draw_key(painter: &Painter, key: &KeyRect, parts: &[Rect], s: &KeyState, lang
             theme::mono(12.0 * scale),
             ACCENT,
         );
-        // Pontinho âmbar no canto, marcando que a tecla foi remapeada.
-        painter.circle_filled(pos2(parts[0].right() - 7.5 * scale, parts[0].top() + 7.5 * scale), 2.5 * scale, ACCENT);
         return;
     }
 

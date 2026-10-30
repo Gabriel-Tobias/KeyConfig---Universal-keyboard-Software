@@ -71,6 +71,20 @@ Passos de macro: `{ "tap": "KeyA" }`, `{ "down": "ShiftLeft" }`, `{ "up": "Shift
 }
 ```
 
+### Modificadores e toque duplo
+
+Em `combos`, uma ação vale só segurando modificadores (`ctrl`, `shift`, `alt`, `win`) e/ou com dois toques rápidos. Sem o gatilho, a tecla faz o que está em `mappings` (ou o normal). No configurador, isso fica na linha **Quando**, acima das abas.
+
+```json
+"combos": [
+  { "key": "Slash", "mods": ["shift"], "double_tap": true, "action": { "type": "text", "text": "?" } },
+  { "key": "KeyJ", "mods": ["ctrl", "alt"], "action": { "type": "run", "command": "notepad.exe" } }
+]
+```
+
+- Os modificadores do gatilho são soltos enquanto a ação roda, então `Shift` + `;` `;` digita `?`, e não `Shift` + `?`.
+- Numa tecla com toque duplo, o primeiro toque espera 0,3 s pelo segundo. Se ele não vier (ou outra tecla for apertada), vale o toque simples.
+
 ## Programas rodando como administrador
 
 O Windows impede que um programa comum altere o teclado de janelas elevadas. Quando isso acontece, o KeyConfig mostra um aviso. Para funcionar em tudo:

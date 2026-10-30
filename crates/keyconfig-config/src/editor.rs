@@ -5,7 +5,7 @@
 
 use eframe::egui::{self, vec2, Align2, Color32, Frame, Margin, Rect, RichText, Sense, Stroke};
 use keyconfig_core::geometry;
-use keyconfig_core::{tr, Action, KeyCode, Language, MacroStep, Profile};
+use keyconfig_core::{tr, Action, KeyCode, Language, MacroStep, Modifier, Profile, Trigger};
 
 use crate::keyboard::summary;
 use crate::theme::{
@@ -152,6 +152,8 @@ const MEDIA: &[KeyCode] = &[
 
 /// Caracteres digitados direto (via Unicode), que saem iguais em qualquer idioma do Windows.
 const CHARACTERS: &[&str] = &[
+    "?", "!", "/", "\\", "|", ":", ";", "@", "#", "$", "%", "&", "*", "(", ")", "[", "]", "{", "}",
+    "<", ">", "=", "+", "-", "_", "'", "\"", "~", "^", "`", "´",
     "ç", "Ç", "ã", "õ", "ñ", "°", "ª", "º", "§", "€", "£", "¬", "¹", "²", "³",
 ];
 
@@ -219,7 +221,9 @@ fn same_modifier(a: KeyCode, b: KeyCode) -> bool {
 pub struct Editor {
     tab: Page,
     drafts: Drafts,
-    loaded_for: Option<(String, KeyCode)>,
+    /// Gatilho sendo editado: toque comum ou com modificadores/toque duplo.
+    trigger: Trigger,
+    loaded_for: Option<(String, KeyCode, Trigger)>,
     query: String,
     category: Category,
 }
@@ -229,6 +233,7 @@ impl Editor {
         Editor {
             tab: Page::Keyboard,
             drafts: Drafts::default(),
+            trigger: Trigger::PLAIN,
             loaded_for: None,
             query: String::new(),
             category: Category::Common,
@@ -253,10 +258,16 @@ impl Editor {
     fn contents(&mut self, ui: &mut egui::Ui, profile_id: &str, profile: &mut Profile, key: KeyCode) {
         let lang = profile.language;
 
-        // Trocou de tecla ou de perfil: recarrega os rascunhos e escolhe a aba certa.
-        let target = (profile_id.to_owned(), key);
+        // Outra tecla começa no toque comum.
+        if self.loaded_for.as_ref().is_some_and(|(id, k, _)| id != profile_id || *k != key) {
+            self.trigger = Trigger::PLAIN;
+        }
+        let trigger = self.trigger;
+
+        // Trocou de tecla, perfil ou gatilho: recarrega os rascunhos e escolhe a aba certa.
+        let target = (profile_id.to_owned(), key, trigger);
         if self.loaded_for.as_ref() != Some(&target) {
-            let action = profile.mappings.get(&key);
+            let action = profile.action(key, trigger);
             self.drafts = Drafts::from_action(action);
             self.tab = Page::for_action(action);
             if let Some(Action::DeadKey { .. }) = action {
@@ -272,31 +283,91 @@ impl Editor {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(8.0, 12.0);
                 ui.horizontal(|ui| {
+                    if !trigger.mods.is_empty() {
+                        let mods = Trigger { double_tap: false, ..trigger }.label();
+                        ui.label(RichText::new(format!("{mods} +")).font(theme::mono(14.0)).color(TEXT_DIM));
+                    }
                     key_badge(ui, key, lang);
+                    if trigger.double_tap {
+                        ui.label(RichText::new("2×").font(theme::mono(14.0)).color(TEXT_DIM));
+                    }
                     ui.add_space(4.0);
                     ui.label(RichText::new(icon::ARROW).font(theme::icon_font(14.0)).color(TEXT_FAINT));
                     ui.add_space(4.0);
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
-                        let (text, color) = match profile.mappings.get(&key) {
+                        let (text, color) = match profile.action(key, trigger) {
                             Some(action) => (describe_action(action, lang), ACCENT),
-                            None => (tr("Comportamento padrão", "Default behavior", "Comportamiento predeterminado").to_owned(), TEXT),
+                            None if trigger.is_plain() => (tr("Comportamento padrão", "Default behavior", "Comportamiento predeterminado").to_owned(), TEXT),
+                            None => (tr("Nada configurado", "Nothing set", "Nada configurado").to_owned(), TEXT),
                         };
                         ui.label(RichText::new(text).font(theme::semibold(16.0)).color(color));
                         ui.label(RichText::new(tr("Escolha abaixo o que esta tecla deve fazer", "Choose below what this key should do", "Elige abajo qué debe hacer esta tecla")).size(12.0).color(TEXT_FAINT));
                     });
                 });
                 theme::trailing(ui, 320.0, |ui| {
-                    let mapped = profile.mappings.contains_key(&key);
-                    if theme::button(ui, Kind::Ghost, Some(icon::RESET), tr("Restaurar padrão", "Restore default", "Restaurar"), mapped).clicked() {
-                        profile.mappings.remove(&key);
+                    let current = profile.action(key, trigger);
+                    let (mapped, off) = (current.is_some(), current == Some(&Action::Disabled));
+                    let reset = if trigger.is_plain() {
+                        tr("Restaurar padrão", "Restore default", "Restaurar")
+                    } else {
+                        tr("Remover", "Remove", "Quitar")
+                    };
+                    if theme::button(ui, Kind::Ghost, Some(icon::RESET), reset, mapped).clicked() {
+                        profile.set_action(key, trigger, None);
                     }
-                    let off = profile.mappings.get(&key) == Some(&Action::Disabled);
                     if theme::button(ui, Kind::Danger, Some(icon::POWER), tr("Desligar tecla", "Turn key off", "Desactivar tecla"), !off).clicked() {
-                        profile.mappings.insert(key, Action::Disabled);
+                        profile.set_action(key, trigger, Some(Action::Disabled));
                     }
                 });
             });
+        });
+
+        // Gatilho: com quais modificadores e se pede toque duplo.
+        section(ui, Margin::symmetric(20.0, 14.0), true, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(8.0, 10.0);
+                theme::field_label(ui, tr("Quando", "When", "Cuando"));
+                for m in Modifier::ALL {
+                    if theme::chip_toggle(ui, m.label(), None, self.trigger.mods.has(m)).clicked() {
+                        self.trigger.mods.set(m, !self.trigger.mods.has(m));
+                    }
+                }
+                ui.add_space(4.0);
+                if theme::chip_toggle(ui, tr("Toque duplo", "Double tap", "Doble toque"), None, self.trigger.double_tap).clicked() {
+                    self.trigger.double_tap = !self.trigger.double_tap;
+                }
+                let others = profile.combo_triggers(key);
+                if !others.is_empty() {
+                    theme::wrap_if(ui, 320.0);
+                    ui.add_space(12.0);
+                    theme::field_label(ui, tr("Configurados", "Set up", "Configurados"));
+                    let plain_set = profile.mappings.contains_key(&key);
+                    let list = plain_set.then_some(Trigger::PLAIN).into_iter().chain(others);
+                    for t in list {
+                        let name = if t.is_plain() { tr("Normal", "Normal", "Normal").to_owned() } else { t.label() };
+                        if theme::chip_toggle(ui, &name, None, t == self.trigger).clicked() {
+                            self.trigger = t;
+                        }
+                    }
+                }
+            });
+            let hint = match (self.trigger.mods.is_empty(), self.trigger.double_tap) {
+                (true, false) => None,
+                (false, false) => Some(tr(
+                    "Vale só segurando esses modificadores. Sem eles, a tecla continua como antes.",
+                    "Only applies while holding these modifiers. Without them, the key works as before.",
+                    "Solo funciona manteniendo estos modificadores. Sin ellos, la tecla sigue como antes.",
+                )),
+                (_, true) => Some(tr(
+                    "Dois toques rápidos fazem esta ação. Um toque só espera 0,3 s pelo segundo e então faz o normal.",
+                    "Two quick taps run this action. A single tap waits 0.3 s for a second one, then does the usual.",
+                    "Dos toques rápidos hacen esta acción. Un solo toque espera 0,3 s al segundo y luego hace lo normal.",
+                )),
+            };
+            if let Some(hint) = hint {
+                ui.label(RichText::new(hint).size(12.0).color(TEXT_DIM));
+            }
         });
 
         // Abas.
@@ -313,11 +384,11 @@ impl Editor {
 
         section(ui, Margin { left: 20.0, right: 20.0, top: 18.0, bottom: 22.0 }, false, |ui| {
             ui.spacing_mut().item_spacing.y = 16.0;
-            let current = profile.mappings.get(&key).cloned();
+            let current = profile.action(key, trigger).cloned();
             match self.tab {
                 Page::Keyboard => {
                     if let Some(action) = self.chooser(ui, lang, &Category::ALL, current.as_ref()) {
-                        profile.mappings.insert(key, action);
+                        profile.set_action(key, trigger, Some(action));
                     }
                 }
                 Page::Media => {
@@ -331,17 +402,17 @@ impl Editor {
                         .collect();
                     ui.label(RichText::new(tr("Controle de música e volume, em qualquer programa.", "Music and volume control, in any program.", "Control de música y volumen, en cualquier programa.")).color(TEXT_DIM));
                     if let Some(action) = chip_grid(ui, &chips, current.as_ref(), 120.0) {
-                        profile.mappings.insert(key, action);
+                        profile.set_action(key, trigger, Some(action));
                     }
                 }
                 Page::Combination => {
                     if let Some(action) = self.combination(ui, lang) {
-                        profile.mappings.insert(key, action);
+                        profile.set_action(key, trigger, Some(action));
                     }
                 }
                 Page::Macro => {
                     if let Some(action) = self.macro_editor(ui, lang) {
-                        profile.mappings.insert(key, action);
+                        profile.set_action(key, trigger, Some(action));
                     }
                 }
                 Page::Text => {
@@ -357,7 +428,7 @@ impl Editor {
                             .hint_text(tr("Ex.: Atenciosamente,\nGabriel", "E.g.: Best regards,\nGabriel", "Ej.: Saludos cordiales,\nGabriel")),
                     );
                     if theme::button(ui, Kind::Primary, None, tr("Aplicar", "Apply", "Aplicar"), !self.drafts.text.is_empty()).clicked() {
-                        profile.mappings.insert(key, Action::Text { text: self.drafts.text.clone() });
+                        profile.set_action(key, trigger, Some(Action::Text { text: self.drafts.text.clone() }));
                     }
                 }
                 Page::Run => {
@@ -382,12 +453,13 @@ impl Editor {
                     });
                     let ok = !self.drafts.command.trim().is_empty();
                     if theme::button(ui, Kind::Primary, None, tr("Aplicar", "Apply", "Aplicar"), ok).clicked() {
-                        profile.mappings.insert(
+                        profile.set_action(
                             key,
-                            Action::Run {
+                            trigger,
+                            Some(Action::Run {
                                 command: self.drafts.command.trim().to_owned(),
                                 args: self.drafts.args.trim().to_owned(),
-                            },
+                            }),
                         );
                     }
                 }

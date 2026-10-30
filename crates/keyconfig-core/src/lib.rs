@@ -10,7 +10,7 @@ pub mod store;
 
 pub use i18n::{tr, UiLang};
 pub use keycode::{KeyCode, KeyLookup, KeyOutput};
-pub use profile::{Action, Language, Layout, MacroStep, Profile};
+pub use profile::{Action, Combo, Language, Layout, MacroStep, Modifier, Mods, Profile, Trigger};
 
 /// Nomes compartilhados entre o motor e o configurador.
 pub mod ipc {

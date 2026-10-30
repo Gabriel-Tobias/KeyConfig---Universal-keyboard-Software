@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use keyconfig_core::{tr, Action, KeyCode, MacroStep};
+use keyconfig_core::{tr, Action, KeyCode, MacroStep, Mods};
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::System::Com::{
     CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
@@ -23,11 +23,14 @@ use crate::util::wide;
 /// Avisa a janela principal que um comando falhou; o texto fica em [`take_error`].
 pub const WM_WORKER_ERROR: u32 = WM_APP + 2;
 
-static QUEUE: OnceLock<Sender<Arc<Action>>> = OnceLock::new();
+/// A ação e os modificadores do gatilho, soltos enquanto ela roda.
+type Job = (Arc<Action>, Mods);
+
+static QUEUE: OnceLock<Sender<Job>> = OnceLock::new();
 static LAST_ERROR: Mutex<String> = Mutex::new(String::new());
 
 pub fn start(hwnd: HWND) {
-    let (tx, rx) = mpsc::channel::<Arc<Action>>();
+    let (tx, rx) = mpsc::channel::<Job>();
     if QUEUE.set(tx).is_err() {
         return;
     }
@@ -36,8 +39,12 @@ pub fn start(hwnd: HWND) {
     std::thread::spawn(move || {
         // ShellExecute precisa de COM inicializado na thread.
         unsafe { CoInitializeEx(null(), (COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) as u32) };
-        for action in rx {
-            if let Err(e) = run(&action) {
+        for (action, mods) in rx {
+            let lifted = input::held_sides(mods);
+            input::release(lifted);
+            let result = run(&action);
+            input::restore(lifted);
+            if let Err(e) = result {
                 *LAST_ERROR.lock().unwrap_or_else(|p| p.into_inner()) = e;
                 unsafe { PostMessageW(hwnd as HWND, WM_WORKER_ERROR, 0, 0) };
             }
@@ -45,9 +52,9 @@ pub fn start(hwnd: HWND) {
     });
 }
 
-pub fn submit(action: Arc<Action>) {
+pub fn submit(action: Arc<Action>, mods: Mods) {
     if let Some(queue) = QUEUE.get() {
-        let _ = queue.send(action);
+        let _ = queue.send((action, mods));
     }
 }
 

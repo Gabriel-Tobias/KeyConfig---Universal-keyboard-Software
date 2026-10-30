@@ -9,13 +9,13 @@ use std::cell::RefCell;
 use std::ptr::{null, null_mut};
 use std::sync::Arc;
 
-use keyconfig_core::{accent, Action, KeyCode, KeyLookup, Profile};
-use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+use keyconfig_core::{accent, Action, KeyCode, KeyLookup, Mods, Profile, Trigger};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, GetKeyState};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT,
-    LLKHF_EXTENDED, LLKHF_INJECTED, LLKHF_UP, WH_KEYBOARD_LL,
+    CallNextHookEx, KillTimer, SetTimer, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION, HHOOK,
+    KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, LLKHF_UP, WH_KEYBOARD_LL,
 };
 
 use crate::input::{self, INJECT_TAG};
@@ -27,38 +27,71 @@ const VK_MENU: i32 = 0x12;
 const VK_CAPITAL: i32 = 0x14;
 const VK_SPACE: u32 = 0x20;
 
+/// Quanto o primeiro toque espera pelo segundo antes de valer como toque simples.
+const DOUBLE_TAP_MS: u32 = 300;
+
+/// Ação em andamento numa tecla segurada.
+#[derive(Clone)]
+struct Active {
+    action: Arc<Action>,
+    /// Modificadores do gatilho que soltamos ao apertar e voltamos ao soltar.
+    lifted: u8,
+}
+
 #[derive(Clone)]
 enum Held {
     Up,
     /// Foi pressionada sem mapeamento; a soltura também passa direto.
     Passed,
     /// Foi pressionada com este mapeamento; a soltura usa o mesmo, mesmo que o perfil mude.
-    Mapped(Arc<Action>),
+    Mapped(Active),
     /// Foi consumida por um acento (`~` + `a`); a soltura é descartada.
     Swallowed,
+    /// Primeiro toque de um possível toque duplo, ainda sem decisão.
+    Pending,
+}
+
+/// Uma ação para executar depois que o hook decide.
+struct Fire {
+    active: Active,
+    up: bool,
+    /// Modificadores do gatilho, para as ações que rodam no worker soltarem.
+    combo: Mods,
 }
 
 enum Decision {
     Pass,
     Block,
-    Act(Arc<Action>, bool),
+    Act(Fire),
     /// Bloqueia a tecla e digita este caractere no lugar.
     Type(char),
 }
 
 struct Outcome {
+    /// Toque duplo que não se completou: vale o toque simples, antes desta tecla.
+    flushed: Vec<Fire>,
     /// Acento pendente que não combinou com esta tecla e precisa ser digitado antes dela.
     prefix: Option<char>,
     key: Option<KeyCode>,
     decision: Decision,
 }
 
+struct PendingTap {
+    key: KeyCode,
+    mods: Mods,
+    released: bool,
+    timer: usize,
+}
+
 struct Engine {
     mappings: Vec<Option<Arc<Action>>>,
+    /// Ações com gatilho especial (modificadores e/ou toque duplo), por tecla.
+    combos: Vec<Vec<(Trigger, Arc<Action>)>>,
     held: Vec<Held>,
     lookup: KeyLookup,
     /// Acento de uma tecla morta esperando a próxima letra.
     pending_accent: Option<char>,
+    pending_tap: Option<PendingTap>,
     /// Configurador em foco: as teclas passam sem remapear, para ele ver as físicas.
     paused: bool,
 }
@@ -67,9 +100,11 @@ impl Engine {
     fn new() -> Self {
         Engine {
             mappings: vec![None; KeyCode::ALL.len()],
+            combos: vec![Vec::new(); KeyCode::ALL.len()],
             held: vec![Held::Up; KeyCode::ALL.len()],
             lookup: KeyLookup::new(),
             pending_accent: None,
+            pending_tap: None,
             paused: false,
         }
     }
@@ -79,32 +114,48 @@ impl Engine {
             .lookup
             .identify(kb.vkCode, kb.scanCode, kb.flags & LLKHF_EXTENDED != 0);
         let up = kb.flags & LLKHF_UP != 0;
+        if let Some(k) = key {
+            input::track_physical(k, up);
+        }
 
+        let mut flushed = Vec::new();
         if self.paused {
             // Uma tecla mapeada apertada antes da pausa ainda precisa soltar o que enviou.
             let releasing = up
-                && key.is_some_and(|k| matches!(self.held[k.index()], Held::Mapped(_) | Held::Swallowed));
+                && key.is_some_and(|k| matches!(self.held[k.index()], Held::Mapped(_) | Held::Swallowed | Held::Pending));
             if !releasing {
+                self.flush_tap(&mut flushed);
                 if let Some(k) = key {
                     self.held[k.index()] = if up { Held::Up } else { Held::Passed };
                 }
                 self.pending_accent = None;
-                return Outcome { prefix: None, key, decision: Decision::Pass };
+                return Outcome { flushed, prefix: None, key, decision: Decision::Pass };
             }
         }
 
         // Repetição automática de uma tecla segurada não consome o acento.
         let repeat = key.is_some_and(|k| !matches!(self.held[k.index()], Held::Up));
 
+        // O segundo toque do toque duplo é decidido antes de mexer no acento pendente.
+        let second_tap = !up
+            && self
+                .pending_tap
+                .as_ref()
+                .is_some_and(|p| Some(p.key) == key && p.mods == input::mods_down());
+        // Qualquer outra tecla apertada encerra a espera: vale o toque simples, antes dela.
+        if !up && !repeat && !second_tap {
+            self.flush_tap(&mut flushed);
+        }
+
         let mut prefix = None;
-        if !up && !repeat && !is_modifier(kb.vkCode) {
+        if !up && !repeat && !second_tap && !is_modifier(kb.vkCode) {
             if let Some(accent) = self.pending_accent.take() {
                 match combine(accent, kb.vkCode) {
                     Some(c) => {
                         if let Some(k) = key {
                             self.held[k.index()] = Held::Swallowed;
                         }
-                        return Outcome { prefix: None, key, decision: Decision::Type(c) };
+                        return Outcome { flushed, prefix: None, key, decision: Decision::Type(c) };
                     }
                     None => prefix = Some(accent),
                 }
@@ -115,42 +166,133 @@ impl Engine {
             Some(k) => self.decide_key(k, up),
             None => Decision::Pass,
         };
-        Outcome { prefix, key, decision }
+        Outcome { flushed, prefix, key, decision }
     }
 
     fn decide_key(&mut self, key: KeyCode, up: bool) -> Decision {
         let i = key.index();
-        let action = if up {
-            match std::mem::replace(&mut self.held[i], Held::Up) {
-                Held::Passed => return Decision::Pass,
-                Held::Swallowed => return Decision::Block,
-                Held::Mapped(action) => Some(action),
-                Held::Up => self.mappings[i].clone(),
-            }
-        } else {
-            let repeat = matches!(self.held[i], Held::Mapped(_));
-            let action = self.mappings[i].clone();
-            self.held[i] = action.clone().map_or(Held::Passed, Held::Mapped);
-            // Segurar a tecla gera repetições; só a troca simples de tecla deve repeti-las.
-            if repeat && action.as_deref().is_some_and(|a| !matches!(a, Action::Key { .. })) {
-                return Decision::Block;
-            }
-            action
-        };
-
-        match action {
-            None => Decision::Pass,
-            Some(action) => {
-                if let Action::DeadKey { accent } = *action {
-                    if !up {
-                        self.pending_accent = Some(accent);
+        if up {
+            return match std::mem::replace(&mut self.held[i], Held::Up) {
+                Held::Passed => Decision::Pass,
+                Held::Swallowed => Decision::Block,
+                Held::Pending => {
+                    if let Some(p) = &mut self.pending_tap {
+                        p.released = true;
                     }
-                    return Decision::Block;
+                    Decision::Block
                 }
-                Decision::Act(action, up)
+                Held::Mapped(active) => Decision::Act(Fire { active, up: true, combo: Mods::NONE }),
+                Held::Up => match &self.mappings[i] {
+                    Some(action) => self.act(Active { action: action.clone(), lifted: 0 }, true, Mods::NONE),
+                    None => Decision::Pass,
+                },
+            };
+        }
+
+        match &self.held[i] {
+            Held::Up => {}
+            Held::Passed => return Decision::Pass,
+            Held::Swallowed | Held::Pending => return Decision::Block,
+            // Segurar a tecla gera repetições; só a troca simples de tecla deve repeti-las.
+            Held::Mapped(active) => {
+                return match *active.action {
+                    Action::Key { .. } => {
+                        let active = Active { action: active.action.clone(), lifted: 0 };
+                        Decision::Act(Fire { active, up: false, combo: Mods::NONE })
+                    }
+                    _ => Decision::Block,
+                };
+            }
+        }
+
+        let mods = input::mods_down();
+        let double = Trigger { mods, double_tap: true };
+        if let Some(p) = self.pending_tap.take() {
+            kill_timer(p.timer);
+            if let Some(action) = self.combo(key, double) {
+                return self.start(key, action, mods);
+            }
+        }
+        if self.combo(key, double).is_some() {
+            let timer = unsafe { SetTimer(null_mut(), 0, DOUBLE_TAP_MS, Some(tap_timeout)) };
+            self.pending_tap = Some(PendingTap { key, mods, released: false, timer });
+            self.held[i] = Held::Pending;
+            return Decision::Block;
+        }
+        match self.single(key, mods) {
+            Some((action, combo)) => self.start(key, action, combo),
+            None => {
+                self.held[i] = Held::Passed;
+                Decision::Pass
             }
         }
     }
+
+    fn combo(&self, key: KeyCode, trigger: Trigger) -> Option<Arc<Action>> {
+        self.combos[key.index()].iter().find(|(t, _)| *t == trigger).map(|(_, a)| a.clone())
+    }
+
+    /// Ação do toque simples: o combo com estes modificadores ou, se não houver, o mapeamento comum.
+    fn single(&self, key: KeyCode, mods: Mods) -> Option<(Arc<Action>, Mods)> {
+        if !mods.is_empty() {
+            if let Some(action) = self.combo(key, Trigger { mods, double_tap: false }) {
+                return Some((action, mods));
+            }
+        }
+        self.mappings[key.index()].clone().map(|a| (a, Mods::NONE))
+    }
+
+    /// Aperta a ação na tecla. `combo` são os modificadores do gatilho, que a ação não deve receber.
+    fn start(&mut self, key: KeyCode, action: Arc<Action>, combo: Mods) -> Decision {
+        let lifted = match *action {
+            Action::Key { .. } | Action::Shortcut { .. } => input::held_sides(combo),
+            _ => 0,
+        };
+        let active = Active { action, lifted };
+        self.held[key.index()] = Held::Mapped(active.clone());
+        self.act(active, false, combo)
+    }
+
+    fn act(&mut self, active: Active, up: bool, combo: Mods) -> Decision {
+        if let Action::DeadKey { accent } = *active.action {
+            if !up {
+                self.pending_accent = Some(accent);
+            }
+            return Decision::Block;
+        }
+        Decision::Act(Fire { active, up, combo })
+    }
+
+    /// O toque duplo não veio: executa o toque simples da tecla que estava esperando.
+    fn flush_tap(&mut self, out: &mut Vec<Fire>) {
+        let Some(p) = self.pending_tap.take() else { return };
+        kill_timer(p.timer);
+        // Sem nada mapeado, a própria tecla é reenviada.
+        let (action, combo) = self
+            .single(p.key, p.mods)
+            .unwrap_or_else(|| (Arc::new(Action::Key { to: p.key }), Mods::NONE));
+        if let Decision::Act(fire) = self.start(p.key, action, combo) {
+            out.push(fire);
+        }
+        if p.released {
+            if let Held::Mapped(active) = std::mem::replace(&mut self.held[p.key.index()], Held::Up) {
+                if let Decision::Act(fire) = self.act(active, true, Mods::NONE) {
+                    out.push(fire);
+                }
+            }
+        }
+    }
+}
+
+fn kill_timer(timer: usize) {
+    unsafe { KillTimer(null_mut(), timer) };
+}
+
+/// Passou o tempo do toque duplo sem o segundo toque.
+unsafe extern "system" fn tap_timeout(_: HWND, _: u32, _: usize, _: u32) {
+    let mut fires = Vec::new();
+    ENGINE.with_borrow_mut(|engine| engine.flush_tap(&mut fires));
+    fires.into_iter().for_each(perform);
 }
 
 fn is_modifier(vk: u32) -> bool {
@@ -178,13 +320,21 @@ thread_local! {
 }
 
 pub fn set_profile(profile: &Profile) {
+    let mut fires = Vec::new();
     ENGINE.with_borrow_mut(|engine| {
+        // A tecla esperando o segundo toque resolve com o perfil antigo.
+        engine.flush_tap(&mut fires);
         engine.mappings.iter_mut().for_each(|m| *m = None);
         for (&key, action) in &profile.mappings {
             engine.mappings[key.index()] = Some(Arc::new(action.clone()));
         }
+        engine.combos.iter_mut().for_each(Vec::clear);
+        for combo in &profile.combos {
+            engine.combos[combo.key.index()].push((combo.trigger(), Arc::new(combo.action.clone())));
+        }
         engine.pending_accent = None;
     });
+    fires.into_iter().for_each(perform);
 }
 
 pub fn set_paused(paused: bool) {
@@ -216,6 +366,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         if kb.flags & LLKHF_INJECTED == 0 && kb.dwExtraInfo != INJECT_TAG {
             // O empréstimo termina antes do SendInput, que pode reentrar neste callback.
             let outcome = ENGINE.with_borrow_mut(|engine| engine.decide(kb));
+            outcome.flushed.into_iter().for_each(perform);
             if let Some(accent) = outcome.prefix {
                 type_char(accent);
             }
@@ -228,8 +379,8 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                     }
                 }
                 Decision::Block => return 1,
-                Decision::Act(action, up) => {
-                    perform(action, up);
+                Decision::Act(fire) => {
+                    perform(fire);
                     return 1;
                 }
                 Decision::Type(c) => {
@@ -248,7 +399,11 @@ fn type_char(c: char) {
     input::send(&inputs);
 }
 
-fn perform(action: Arc<Action>, up: bool) {
+fn perform(fire: Fire) {
+    let Fire { active: Active { action, lifted }, up, combo } = fire;
+    if !up {
+        input::release(lifted);
+    }
     match &*action {
         Action::Key { to } => input::send(&[input::key(*to, up)]),
         Action::Disabled | Action::DeadKey { .. } => {}
@@ -263,8 +418,11 @@ fn perform(action: Arc<Action>, up: bool) {
         }
         Action::Macro { .. } | Action::Text { .. } | Action::Run { .. } => {
             if !up {
-                worker::submit(action);
+                worker::submit(action, combo);
             }
         }
+    }
+    if up {
+        input::restore(lifted);
     }
 }

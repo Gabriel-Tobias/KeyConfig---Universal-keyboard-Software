@@ -524,7 +524,8 @@ impl ConfigApp {
                             })
                             .show_ui(ui, |ui| {
                                 for &k in &hidden {
-                                    let mark = if profile.mappings.contains_key(&k) { "● " } else { "" };
+                                    let mapped = profile.mappings.contains_key(&k) || profile.combos.iter().any(|c| c.key == k);
+                                    let mark = if mapped { "● " } else { "" };
                                     let label = format!("{mark}{}", geometry::describe(k, lang));
                                     if ui.selectable_label(self.selected == Some(k), label).clicked() {
                                         self.selected = Some(k);
