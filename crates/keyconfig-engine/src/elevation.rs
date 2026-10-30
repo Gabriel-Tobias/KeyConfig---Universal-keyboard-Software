@@ -4,7 +4,7 @@
 //! Quando o KeyConfig roda sem admin, avisamos o usuário na primeira vez que
 //! cada programa elevado ganha o foco.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::mem::{size_of, zeroed};
 use std::path::Path;
@@ -23,6 +23,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WINEVENT_SKIPOWNPROCESS,
 };
 
+use keyconfig_core::ipc;
+
+use crate::hook;
 use crate::tray::{self, Notice};
 use crate::util::wide;
 
@@ -54,10 +57,13 @@ pub fn relaunch_as_admin() -> bool {
 
 thread_local! {
     static WARNED: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    static SELF_ELEVATED: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Passa a observar a janela em foco e avisar sobre programas elevados.
-pub fn watch_foreground() {
+/// Passa a observar a janela em foco: pausa os remapeamentos quando é o
+/// configurador e, se o motor não for admin, avisa sobre programas elevados.
+pub fn watch_foreground(self_elevated: bool) {
+    SELF_ELEVATED.set(self_elevated);
     unsafe {
         SetWinEventHook(
             EVENT_SYSTEM_FOREGROUND,
@@ -87,13 +93,16 @@ unsafe extern "system" fn on_foreground(
     }
     let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
     if process.is_null() {
+        hook::set_paused(false);
         return;
     }
-    let elevated = process_is_elevated(process);
-    let name = elevated.then(|| exe_name(process)).flatten();
+    let name = exe_name(process);
+    let configurator = name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(ipc::CONFIG_EXE));
+    hook::set_paused(configurator);
+    let elevated = !SELF_ELEVATED.get() && process_is_elevated(process);
     CloseHandle(process);
 
-    let Some(name) = name else { return };
+    let Some(name) = name.filter(|_| elevated) else { return };
     if WARNED.with_borrow_mut(|warned| warned.insert(name.to_lowercase())) {
         tray::notify(
             Notice::Warning,

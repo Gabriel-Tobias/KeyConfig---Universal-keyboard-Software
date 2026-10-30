@@ -59,6 +59,8 @@ struct Engine {
     lookup: KeyLookup,
     /// Acento de uma tecla morta esperando a próxima letra.
     pending_accent: Option<char>,
+    /// Configurador em foco: as teclas passam sem remapear, para ele ver as físicas.
+    paused: bool,
 }
 
 impl Engine {
@@ -68,6 +70,7 @@ impl Engine {
             held: vec![Held::Up; KeyCode::ALL.len()],
             lookup: KeyLookup::new(),
             pending_accent: None,
+            paused: false,
         }
     }
 
@@ -76,6 +79,20 @@ impl Engine {
             .lookup
             .identify(kb.vkCode, kb.scanCode, kb.flags & LLKHF_EXTENDED != 0);
         let up = kb.flags & LLKHF_UP != 0;
+
+        if self.paused {
+            // Uma tecla mapeada apertada antes da pausa ainda precisa soltar o que enviou.
+            let releasing = up
+                && key.is_some_and(|k| matches!(self.held[k.index()], Held::Mapped(_) | Held::Swallowed));
+            if !releasing {
+                if let Some(k) = key {
+                    self.held[k.index()] = if up { Held::Up } else { Held::Passed };
+                }
+                self.pending_accent = None;
+                return Outcome { prefix: None, key, decision: Decision::Pass };
+            }
+        }
+
         // Repetição automática de uma tecla segurada não consome o acento.
         let repeat = key.is_some_and(|k| !matches!(self.held[k.index()], Held::Up));
 
@@ -168,6 +185,10 @@ pub fn set_profile(profile: &Profile) {
         }
         engine.pending_accent = None;
     });
+}
+
+pub fn set_paused(paused: bool) {
+    ENGINE.with_borrow_mut(|engine| engine.paused = paused);
 }
 
 pub fn install() -> Result<(), String> {

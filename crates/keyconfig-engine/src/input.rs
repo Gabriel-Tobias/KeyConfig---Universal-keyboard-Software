@@ -9,8 +9,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     MAPVK_VK_TO_VSC,
 };
 
-/// Marca as teclas que nós mesmos enviamos, para o hook não processá-las de novo ("KCFG").
-pub const INJECT_TAG: usize = 0x4B43_4647;
+/// Marca as teclas que nós mesmos enviamos, para o hook não processá-las de novo.
+pub use keyconfig_core::ipc::INJECT_TAG;
 
 pub fn key(code: KeyCode, up: bool) -> INPUT {
     let (vk, scan, mut flags) = match code.output() {

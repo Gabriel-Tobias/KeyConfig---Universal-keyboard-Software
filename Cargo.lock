@@ -967,6 +967,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "keyconfig-core",
+ "raw-window-handle",
  "windows-sys 0.59.0",
 ]
 

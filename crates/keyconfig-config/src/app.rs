@@ -48,6 +48,7 @@ pub struct ConfigApp {
     /// Esperando o usuário apertar uma tecla física para selecioná-la; guarda a
     /// contagem de toques de quando a captura começou.
     capturing_since: Option<u64>,
+    brought_to_front: bool,
 }
 
 impl ConfigApp {
@@ -71,8 +72,9 @@ impl ConfigApp {
             confirm_close: false,
             allow_close: false,
             capturing_since: None,
+            brought_to_front: false,
         };
-        capture::install(&cc.egui_ctx);
+        capture::install(cc);
         if let Err(e) = app.load() {
             app.store = Err(e);
         }
@@ -443,6 +445,13 @@ impl ConfigApp {
 
 impl eframe::App for ConfigApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Aberto pelo ícone da bandeja, o Windows pode deixar a janela minimizada ou atrás das outras.
+        if !self.brought_to_front {
+            self.brought_to_front = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+
         if let Err(e) = &self.store {
             let e = e.clone();
             egui::CentralPanel::default().show(ctx, |ui| {

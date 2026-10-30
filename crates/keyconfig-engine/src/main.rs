@@ -25,7 +25,7 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, ChangeWindowMessageFilterEx, CreatePopupMenu, MSGFLT_ALLOW, MF_DEFAULT, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
+    AllowSetForegroundWindow, AppendMenuW, ChangeWindowMessageFilterEx, ASFW_ANY, CreatePopupMenu, MSGFLT_ALLOW, MF_DEFAULT, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
     DispatchMessageW, GetCursorPos, GetMessageW, PostMessageW, PostQuitMessage, RegisterClassW,
     RegisterWindowMessageW, SetForegroundWindow, TrackPopupMenu, TranslateMessage, MF_CHECKED,
     MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, SW_SHOWNORMAL, TPM_NONOTIFY, TPM_RETURNCMD,
@@ -75,9 +75,7 @@ fn main() {
         message_box(APP, &format!("Não foi possível instalar o hook de teclado: {e}"), true);
         return;
     }
-    if !ELEVATED.get() {
-        elevation::watch_foreground();
-    }
+    elevation::watch_foreground(ELEVATED.get());
 
     unsafe {
         let mut msg: MSG = zeroed();
@@ -299,6 +297,9 @@ fn toggle_autostart(currently_on: bool, elevated: bool) {
 }
 
 fn open_configurator() {
+    // O clique no ícone dá ao motor o direito de trazer janelas para a frente; repassamos
+    // ao configurador, senão o Windows abre a janela dele atrás das outras.
+    unsafe { AllowSetForegroundWindow(ASFW_ANY) };
     let path = std::env::current_exe().map(|exe| exe.with_file_name(ipc::CONFIG_EXE));
     let launched = path.as_ref().is_ok_and(|p| std::process::Command::new(p).spawn().is_ok());
     if !launched {

@@ -1,23 +1,21 @@
 //! Mostra no desenho as teclas físicas apertadas enquanto o configurador está em foco.
 //!
-//! Usa um hook de teclado só de leitura: nunca bloqueia nem altera nada. Teclas
-//! injetadas (como as que o motor envia ao remapear) são ignoradas, então o
-//! desenho sempre mostra a tecla física, não o resultado do remapeamento.
+//! Lê as mensagens de teclado da própria janela, que trazem o scancode físico.
+//! Não dá para usar um hook de teclado aqui: o Windows deixa de chamá-lo
+//! justamente quando a janela do próprio processo está em foco. O motor pausa os
+//! remapeamentos enquanto o configurador está em foco, então o que chega é
+//! sempre a tecla física.
 
-use std::ptr::{null, null_mut};
 use std::sync::{Mutex, OnceLock};
 
-use eframe::egui;
-use keyconfig_core::{KeyCode, KeyLookup};
-use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
-use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+use keyconfig_core::{ipc, KeyCode, KeyLookup};
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetForegroundWindow, GetWindowThreadProcessId, SetWindowsHookExW, HC_ACTION,
-    KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, LLKHF_UP, WH_KEYBOARD_LL,
+    GetMessageExtraInfo, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
-#[derive(Default)]
 struct State {
     held: Vec<KeyCode>,
     last: Option<KeyCode>,
@@ -27,7 +25,6 @@ struct State {
 
 static STATE: Mutex<State> = Mutex::new(State { held: Vec::new(), last: None, presses: 0 });
 static LOOKUP: OnceLock<KeyLookup> = OnceLock::new();
-static CTX: OnceLock<egui::Context> = OnceLock::new();
 
 pub struct Snapshot {
     pub held: Vec<KeyCode>,
@@ -35,11 +32,17 @@ pub struct Snapshot {
     pub presses: u64,
 }
 
-/// Instala o hook na thread atual, que precisa ter loop de mensagens (a do eframe tem).
-pub fn install(ctx: &egui::Context) {
-    let _ = CTX.set(ctx.clone());
+pub fn install(cc: &eframe::CreationContext<'_>) {
     LOOKUP.get_or_init(KeyLookup::new);
-    unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), GetModuleHandleW(null()), 0) };
+    let Some(hwnd) = window_handle(cc) else { return };
+    unsafe { SetWindowSubclass(hwnd, Some(subclass_proc), 1, 0) };
+}
+
+fn window_handle(cc: &eframe::CreationContext<'_>) -> Option<HWND> {
+    match cc.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(h) => Some(h.hwnd.get() as HWND),
+        _ => None,
+    }
 }
 
 pub fn snapshot() -> Snapshot {
@@ -51,42 +54,35 @@ pub fn snapshot() -> Snapshot {
     }
 }
 
-fn we_are_focused() -> bool {
-    unsafe {
-        let mut pid = 0;
-        GetWindowThreadProcessId(GetForegroundWindow(), &mut pid);
-        pid == GetCurrentProcessId()
-    }
-}
-
-unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code == HC_ACTION as i32 {
-        let kb = &*(lparam as *const KBDLLHOOKSTRUCT);
-        let key = LOOKUP
-            .get()
-            .and_then(|l| l.identify(kb.vkCode, kb.scanCode, kb.flags & LLKHF_EXTENDED != 0));
-        if let (Some(key), true) = (key, kb.flags & LLKHF_INJECTED == 0) {
-            let up = kb.flags & LLKHF_UP != 0;
-            let mut changed = false;
-            if let Ok(mut state) = STATE.lock() {
-                // Soltar sempre limpa, mesmo fora de foco, para nada ficar "aceso" preso.
-                if up {
-                    let before = state.held.len();
+unsafe extern "system" fn subclass_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    _data: usize,
+) -> LRESULT {
+    match msg {
+        WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP
+            if GetMessageExtraInfo() as usize != ipc::INJECT_TAG =>
+        {
+            let scan = ((lparam >> 16) & 0xFF) as u32;
+            let extended = (lparam >> 24) & 1 != 0;
+            let key = LOOKUP.get().and_then(|l| l.identify(wparam as u32, scan, extended));
+            if let Some(key) = key {
+                let mut state = STATE.lock().unwrap_or_else(|p| p.into_inner());
+                if matches!(msg, WM_KEYUP | WM_SYSKEYUP) {
                     state.held.retain(|&k| k != key);
-                    changed = state.held.len() != before;
-                } else if !state.held.contains(&key) && we_are_focused() {
+                } else if !state.held.contains(&key) {
                     state.held.push(key);
                     state.last = Some(key);
                     state.presses += 1;
-                    changed = true;
-                }
-            }
-            if changed {
-                if let Some(ctx) = CTX.get() {
-                    ctx.request_repaint();
                 }
             }
         }
+        // Ao perder o foco a soltura vai para outra janela; apaga tudo para nada ficar aceso.
+        WM_KILLFOCUS => STATE.lock().unwrap_or_else(|p| p.into_inner()).held.clear(),
+        _ => {}
     }
-    CallNextHookEx(null_mut(), code, wparam, lparam)
+    DefSubclassProc(hwnd, msg, wparam, lparam)
 }
