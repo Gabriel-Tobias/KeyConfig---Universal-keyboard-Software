@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::KeyCode;
+use crate::{tr, KeyCode};
 
 /// Formato físico do teclado. Por enquanto só informa o configurador quais teclas desenhar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -35,6 +35,8 @@ pub enum Language {
     EnUs,
     #[serde(rename = "en-US-intl")]
     EnUsIntl,
+    #[serde(rename = "es-ES")]
+    EsEs,
 }
 
 impl Layout {
@@ -56,20 +58,26 @@ impl Layout {
             Layout::Compact75 => "75%",
             Layout::Tenkeyless => "TKL (80%)",
             Layout::Compact96 => "96% (1800)",
-            Layout::Full => "Completo (100%)",
+            Layout::Full => tr("Completo (100%)", "Full size (100%)", "Completo (100%)"),
         }
     }
 }
 
 impl Language {
-    pub const ALL: [Language; 3] = [Language::PtBrAbnt2, Language::EnUs, Language::EnUsIntl];
+    pub const ALL: [Language; 4] = [Language::PtBrAbnt2, Language::EnUs, Language::EnUsIntl, Language::EsEs];
 
     pub fn label(self) -> &'static str {
         match self {
-            Language::PtBrAbnt2 => "Português (ABNT2)",
-            Language::EnUs => "Inglês (US)",
-            Language::EnUsIntl => "Inglês (US Internacional)",
+            Language::PtBrAbnt2 => tr("Português (ABNT2)", "Portuguese (ABNT2)", "Portugués (ABNT2)"),
+            Language::EnUs => tr("Inglês (US)", "English (US)", "Inglés (EE. UU.)"),
+            Language::EnUsIntl => tr("Inglês (US Internacional)", "English (US International)", "Inglés (EE. UU. internacional)"),
+            Language::EsEs => tr("Espanhol (Espanha)", "Spanish (Spain)", "Español (España)"),
         }
+    }
+
+    /// Layout ISO: Enter em "L" e a tecla extra ao lado do Shift esquerdo.
+    pub fn is_iso(self) -> bool {
+        matches!(self, Language::PtBrAbnt2 | Language::EsEs)
     }
 }
 

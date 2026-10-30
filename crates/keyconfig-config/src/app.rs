@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, pos2, vec2, Align2, Color32, Margin, Rect, RichText, Sense, Stroke};
 use keyconfig_core::geometry;
 use keyconfig_core::store::{Settings, Store};
-use keyconfig_core::{KeyCode, Language, Layout, Profile};
+use keyconfig_core::{i18n, tr, KeyCode, Language, Layout, Profile, UiLang};
 
 use crate::editor::Editor;
 use crate::theme::{
@@ -89,6 +89,7 @@ impl ConfigApp {
         if let Err(e) = app.load() {
             app.store = Err(e);
         }
+        i18n::set(app.settings.ui_language.unwrap_or_else(system_language));
         app
     }
 
@@ -142,13 +143,13 @@ impl ConfigApp {
         }
         if errors.is_empty() {
             let msg = if engine::request_reload() {
-                "Salvo e aplicado."
+                tr("Salvo e aplicado.", "Saved and applied.", "Guardado y aplicado.")
             } else {
-                "Salvo. O motor não está rodando, então as mudanças valem quando ele for iniciado."
+                tr("Salvo. O motor não está rodando, então as mudanças valem quando ele for iniciado.", "Saved. The engine is not running, so the changes take effect when it starts.", "Guardado. El motor no está en marcha, así que los cambios se aplicarán cuando se inicie.")
             };
             self.set_status(msg, false);
         } else {
-            self.set_status(format!("Erro ao salvar: {}", errors.join("; ")), true);
+            self.set_status(format!("{}: {}", tr("Erro ao salvar", "Error saving", "Error al guardar"), errors.join("; ")), true);
         }
     }
 
@@ -157,7 +158,7 @@ impl ConfigApp {
         let item = &mut self.items[self.current];
         if item.dirty() {
             if let Err(e) = store.save_profile(&item.id, &item.profile) {
-                let msg = format!("Erro ao salvar: {e}");
+                let msg = format!("{}: {e}", tr("Erro ao salvar", "Error saving", "Error al guardar"));
                 self.set_status(msg, true);
                 return;
             }
@@ -168,9 +169,9 @@ impl ConfigApp {
         match store.save_settings(&self.settings) {
             Ok(()) => {
                 engine::request_reload();
-                self.set_status(format!("Agora o perfil em uso é \"{name}\"."), false);
+                self.set_status(format!("{} \"{name}\".", tr("Agora o perfil em uso é", "The profile in use is now", "Ahora el perfil en uso es")), false);
             }
-            Err(e) => self.set_status(format!("Erro ao salvar: {e}"), true),
+            Err(e) => self.set_status(format!("{}: {e}", tr("Erro ao salvar", "Error saving", "Error al guardar")), true),
         }
     }
 
@@ -179,7 +180,7 @@ impl ConfigApp {
         let Ok(store) = &self.store else { return };
         let id = store.new_profile_id(&profile.name);
         if let Err(e) = store.save_profile(&id, &profile) {
-            self.set_status(format!("Erro ao criar perfil: {e}"), true);
+            self.set_status(format!("{}: {e}", tr("Erro ao criar perfil", "Error creating profile", "Error al crear el perfil")), true);
             return;
         }
         self.items.push(Item { id, saved: profile.clone(), profile });
@@ -191,7 +192,7 @@ impl ConfigApp {
         let Ok(store) = &self.store else { return };
         let id = self.items[self.current].id.clone();
         if let Err(e) = store.delete_profile(&id) {
-            self.set_status(format!("Erro ao excluir: {e}"), true);
+            self.set_status(format!("{}: {e}", tr("Erro ao excluir", "Error deleting", "Error al eliminar")), true);
             return;
         }
         self.items.remove(self.current);
@@ -202,7 +203,7 @@ impl ConfigApp {
             let _ = store.save_settings(&self.settings);
             engine::request_reload();
         }
-        self.set_status("Perfil excluído.", false);
+        self.set_status(tr("Perfil excluído.", "Profile deleted.", "Perfil eliminado."), false);
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
@@ -210,14 +211,14 @@ impl ConfigApp {
         ui.add_space(24.0);
 
         ui.horizontal(|ui| {
-            theme::section(ui, "Perfis");
+            theme::section(ui, tr("Perfis", "Profiles", "Perfiles"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if theme::button(ui, Kind::Ghost, Some(icon::ADD), "Novo", true)
-                    .on_hover_text("Criar um perfil vazio")
+                if theme::button(ui, Kind::Ghost, Some(icon::ADD), tr("Novo", "New", "Nuevo"), true)
+                    .on_hover_text(tr("Criar um perfil vazio", "Create an empty profile", "Crear un perfil vacío"))
                     .clicked()
                 {
                     let current = &self.items[self.current].profile;
-                    let mut profile = Profile::new("Novo perfil");
+                    let mut profile = Profile::new(tr("Novo perfil", "New profile", "Nuevo perfil"));
                     profile.layout = current.layout;
                     profile.language = current.language;
                     self.add_profile(profile);
@@ -236,21 +237,21 @@ impl ConfigApp {
                 }
             }
             for (id, error) in &self.broken {
-                ui.label(RichText::new(format!("⚠ {id}.json com erro")).color(DANGER)).on_hover_text(error);
+                ui.label(RichText::new(format!("⚠ {id}.json {}", tr("com erro", "has errors", "con errores"))).color(DANGER)).on_hover_text(error);
             }
         });
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             let half = (ui.available_width() - 8.0) / 2.0;
-            if theme::button_with(ui, Kind::Ghost, Some(icon::COPY), "Duplicar", None, true, half).clicked() {
+            if theme::button_with(ui, Kind::Ghost, Some(icon::COPY), tr("Duplicar", "Duplicate", "Duplicar"), None, true, half).clicked() {
                 let mut profile = self.items[self.current].profile.clone();
-                profile.name = format!("{} (cópia)", profile.name);
+                profile.name = format!("{} ({})", profile.name, tr("cópia", "copy", "copia"));
                 self.add_profile(profile);
             }
             let can_delete = self.items.len() > 1;
-            if theme::button_with(ui, Kind::Danger, Some(icon::DELETE), "Excluir", None, can_delete, half)
-                .on_disabled_hover_text("É preciso ter pelo menos um perfil.")
+            if theme::button_with(ui, Kind::Danger, Some(icon::DELETE), tr("Excluir", "Delete", "Eliminar"), None, can_delete, half)
+                .on_disabled_hover_text(tr("É preciso ter pelo menos um perfil.", "You need at least one profile.", "Se necesita al menos un perfil."))
                 .clicked()
             {
                 self.confirm_delete = true;
@@ -259,15 +260,52 @@ impl ConfigApp {
         if self.items[self.current].id != self.settings.active_profile {
             ui.add_space(4.0);
             let width = ui.available_width();
-            if theme::button_with(ui, Kind::Primary, None, "Usar este perfil", None, true, width).clicked() {
+            if theme::button_with(ui, Kind::Primary, None, tr("Usar este perfil", "Use this profile", "Usar este perfil"), None, true, width).clicked() {
                 self.activate_current();
             }
         }
 
-        // Empurra o cartão do motor para o fim da barra (altura aproximada do cartão).
-        let card_height = if self.engine_running { 64.0 } else { 108.0 };
-        ui.add_space((ui.available_height() - card_height).max(8.0));
+        // Empurra o idioma e o cartão do motor para o fim da barra (alturas aproximadas).
+        let footer_height = if self.engine_running { 64.0 } else { 108.0 } + 48.0;
+        ui.add_space((ui.available_height() - footer_height).max(8.0));
+        self.language_picker(ui);
+        ui.add_space(10.0);
         self.engine_card(ui);
+    }
+
+    /// Idioma da interface. O motor também usa esta escolha no menu e nos avisos.
+    fn language_picker(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.label(RichText::new("\u{E774}").font(theme::icon_font(14.0)).color(TEXT_FAINT))
+                .on_hover_text(tr("Idioma do app", "App language", "Idioma de la app"));
+            let current = i18n::current();
+            let mut chosen = current;
+            egui::ComboBox::from_id_salt("ui_language")
+                .width(ui.available_width() - 8.0)
+                .selected_text(current.native_name())
+                .show_ui(ui, |ui| {
+                    for lang in UiLang::ALL {
+                        ui.selectable_value(&mut chosen, lang, lang.native_name());
+                    }
+                });
+            if chosen != current {
+                self.set_language(chosen);
+            }
+        });
+    }
+
+    fn set_language(&mut self, lang: UiLang) {
+        i18n::set(lang);
+        self.settings.ui_language = Some(lang);
+        let Ok(store) = &self.store else { return };
+        match store.save_settings(&self.settings) {
+            // O motor relê as configurações e passa a usar o novo idioma no menu.
+            Ok(()) => {
+                engine::request_reload();
+            }
+            Err(e) => self.set_status(format!("{}: {e}", tr("Erro ao salvar", "Error saving", "Error al guardar")), true),
+        }
     }
 
     fn brand(&self, ui: &mut egui::Ui) {
@@ -318,7 +356,7 @@ impl ConfigApp {
         }
 
         if active {
-            let galley = painter.layout_no_wrap("Em uso".to_owned(), theme::medium(11.0), OK);
+            let galley = painter.layout_no_wrap(tr("Em uso", "In use", "En uso").to_owned(), theme::medium(11.0), OK);
             let pill = Rect::from_min_size(
                 pos2(rect.right() - galley.size().x - 16.0 - 10.0, rect.center().y - galley.size().y / 2.0 - 3.0),
                 galley.size() + vec2(16.0, 6.0),
@@ -338,9 +376,9 @@ impl ConfigApp {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 let (color, title, detail) = if self.engine_running {
-                    (OK, "Motor ativo", "Remapeamento ligado")
+                    (OK, tr("Motor ativo", "Engine running", "Motor activo"), tr("Remapeamento ligado", "Remapping on", "Reasignación activada"))
                 } else {
-                    (DANGER, "Motor parado", "Remapeamento desligado")
+                    (DANGER, tr("Motor parado", "Engine stopped", "Motor detenido"), tr("Remapeamento desligado", "Remapping off", "Reasignación desactivada"))
                 };
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
@@ -356,10 +394,10 @@ impl ConfigApp {
                 if !self.engine_running {
                     ui.add_space(4.0);
                     let width = ui.available_width();
-                    if theme::button_with(ui, Kind::Primary, None, "Iniciar motor", None, true, width).clicked() {
+                    if theme::button_with(ui, Kind::Primary, None, tr("Iniciar motor", "Start engine", "Iniciar motor"), None, true, width).clicked() {
                         match engine::launch() {
-                            Ok(()) => self.set_status("Motor iniciado.", false),
-                            Err(e) => self.set_status(format!("Não foi possível iniciar o motor: {e}"), true),
+                            Ok(()) => self.set_status(tr("Motor iniciado.", "Engine started.", "Motor iniciado."), false),
+                            Err(e) => self.set_status(format!("{}: {e}", tr("Não foi possível iniciar o motor", "Could not start the engine", "No se pudo iniciar el motor")), true),
                         }
                     }
                 }
@@ -374,7 +412,7 @@ impl ConfigApp {
             let profile = &mut self.items[self.current].profile;
 
             ui.horizontal(|ui| {
-                theme::field_label(ui, "Nome");
+                theme::field_label(ui, tr("Nome", "Name", "Nombre"));
                 ui.add(
                     egui::TextEdit::singleline(&mut profile.name)
                         .desired_width(180.0)
@@ -384,7 +422,7 @@ impl ConfigApp {
             });
             theme::wrap_if(ui, 230.0);
             ui.horizontal(|ui| {
-                theme::field_label(ui, "Formato");
+                theme::field_label(ui, tr("Formato", "Layout", "Formato"));
                 egui::ComboBox::from_id_salt("layout")
                     .width(130.0)
                     .selected_text(RichText::new(profile.layout.label()).font(theme::semibold(13.0)))
@@ -396,7 +434,7 @@ impl ConfigApp {
             });
             theme::wrap_if(ui, 300.0);
             ui.horizontal(|ui| {
-                theme::field_label(ui, "Idioma");
+                theme::field_label(ui, tr("Idioma", "Language", "Idioma"));
                 egui::ComboBox::from_id_salt("language")
                     .width(220.0)
                     .selected_text(RichText::new(profile.language.label()).font(theme::semibold(13.0)))
@@ -410,9 +448,9 @@ impl ConfigApp {
             let needed = if dirty { 290.0 } else { 140.0 };
             theme::trailing(ui, needed, |ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
-                save = theme::button_with(ui, Kind::Primary, None, "Salvar", Some("Ctrl+S"), dirty, 0.0).clicked();
+                save = theme::button_with(ui, Kind::Primary, None, tr("Salvar", "Save", "Guardar"), Some("Ctrl+S"), dirty, 0.0).clicked();
                 if dirty {
-                    ui.label(RichText::new("Alterações não salvas").size(12.0).color(ACCENT));
+                    ui.label(RichText::new(tr("Alterações não salvas", "Unsaved changes", "Cambios sin guardar")).size(12.0).color(ACCENT));
                 }
             });
         });
@@ -455,13 +493,13 @@ impl ConfigApp {
                 ui.set_max_width(width);
                 ui.spacing_mut().item_spacing = vec2(14.0, 10.0);
                 if self.capturing_since.is_some() {
-                    if theme::button(ui, Kind::Primary, Some(icon::TARGET), "Cancelar captura", true).clicked() {
+                    if theme::button(ui, Kind::Primary, Some(icon::TARGET), tr("Cancelar captura", "Cancel capture", "Cancelar captura"), true).clicked() {
                         self.capturing_since = None;
                     }
-                    ui.label(RichText::new("Aperte no seu teclado a tecla que você quer mapear…").color(ACCENT));
+                    ui.label(RichText::new(tr("Aperte no seu teclado a tecla que você quer mapear…", "Press the key you want to map on your keyboard…", "Pulsa en tu teclado la tecla que quieres asignar…")).color(ACCENT));
                 } else {
-                    if theme::button(ui, Kind::Normal, Some(icon::TARGET), "Capturar tecla", true)
-                        .on_hover_text("Clique e aperte uma tecla no seu teclado para selecioná-la aqui.")
+                    if theme::button(ui, Kind::Normal, Some(icon::TARGET), tr("Capturar tecla", "Capture key", "Capturar tecla"), true)
+                        .on_hover_text(tr("Clique e aperte uma tecla no seu teclado para selecioná-la aqui.", "Click, then press a key on your keyboard to select it here.", "Haz clic y pulsa una tecla en tu teclado para seleccionarla aquí."))
                         .clicked()
                     {
                         self.capturing_since = Some(keys.presses);
@@ -470,19 +508,19 @@ impl ConfigApp {
                         theme::wrap_if(ui, 200.0);
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
-                            ui.label(RichText::new("Última tecla").color(TEXT_DIM));
+                            ui.label(RichText::new(tr("Última tecla", "Last key", "Última tecla")).color(TEXT_DIM));
                             key_tag(ui, &geometry::describe(k, lang));
                         });
                     }
                     theme::wrap_if(ui, 270.0);
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
-                        theme::field_label(ui, "Outras teclas");
+                        theme::field_label(ui, tr("Outras teclas", "Other keys", "Otras teclas"));
                         egui::ComboBox::from_id_salt("hidden_keys")
                             .width(160.0)
                             .selected_text(match self.selected {
                                 Some(k) if hidden.contains(&k) => geometry::describe(k, lang),
-                                _ => "Escolher…".to_owned(),
+                                _ => tr("Escolher…", "Choose…", "Elegir…").to_owned(),
                             })
                             .show_ui(ui, |ui| {
                                 for &k in &hidden {
@@ -498,17 +536,17 @@ impl ConfigApp {
 
                 theme::trailing(ui, 400.0, |ui| {
                     ui.spacing_mut().item_spacing.x = 16.0;
-                    legend(ui, "Apertada", Legend::Pressed);
-                    legend(ui, "Desligada", Legend::Off);
-                    legend(ui, "Selecionada", Legend::Selected);
-                    legend(ui, "Remapeada", Legend::Remapped);
+                    legend(ui, tr("Apertada", "Pressed", "Pulsada"), Legend::Pressed);
+                    legend(ui, tr("Desligada", "Off", "Desactivada"), Legend::Off);
+                    legend(ui, tr("Selecionada", "Selected", "Seleccionada"), Legend::Selected);
+                    legend(ui, tr("Remapeada", "Remapped", "Reasignada"), Legend::Remapped);
                 });
             }));
         });
         ui.horizontal(|ui| {
             ui.add_space(left);
             ui.label(
-                RichText::new("Use “Outras teclas” para o que não aparece no desenho, como F13–F24 e teclas de mídia.")
+                RichText::new(tr("Use “Outras teclas” para o que não aparece no desenho, como F13–F24 e teclas de mídia.", "Use “Other keys” for anything not in the drawing, such as F13–F24 and media keys.", "Usa “Otras teclas” para lo que no aparece en el dibujo, como F13–F24 y teclas multimedia."))
                     .size(12.0)
                     .color(TEXT_FAINT),
             );
@@ -572,15 +610,15 @@ impl ConfigApp {
     fn dialogs(&mut self, ctx: &egui::Context) {
         if self.confirm_delete {
             let name = self.items[self.current].profile.name.clone();
-            modal(ctx, "Excluir perfil", |ui| {
-                ui.label(RichText::new(format!("Excluir o perfil \"{name}\"? Isso não pode ser desfeito.")).color(TEXT_DIM));
+            modal(ctx, tr("Excluir perfil", "Delete profile", "Eliminar perfil"), |ui| {
+                ui.label(RichText::new(format!("{} \"{name}\"? {}", tr("Excluir o perfil", "Delete the profile", "¿Eliminar el perfil"), tr("Isso não pode ser desfeito.", "This cannot be undone.", "No se puede deshacer."))).color(TEXT_DIM));
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
-                    if theme::button(ui, Kind::Danger, Some(icon::DELETE), "Excluir", true).clicked() {
+                    if theme::button(ui, Kind::Danger, Some(icon::DELETE), tr("Excluir", "Delete", "Eliminar"), true).clicked() {
                         self.confirm_delete = false;
                         self.delete_current();
                     }
-                    if theme::button(ui, Kind::Ghost, None, "Cancelar", true).clicked() {
+                    if theme::button(ui, Kind::Ghost, None, tr("Cancelar", "Cancel", "Cancelar"), true).clicked() {
                         self.confirm_delete = false;
                     }
                 });
@@ -588,11 +626,11 @@ impl ConfigApp {
         }
 
         if self.confirm_close {
-            modal(ctx, "Alterações não salvas", |ui| {
-                ui.label(RichText::new("Existem alterações que ainda não foram salvas.").color(TEXT_DIM));
+            modal(ctx, tr("Alterações não salvas", "Unsaved changes", "Cambios sin guardar"), |ui| {
+                ui.label(RichText::new(tr("Existem alterações que ainda não foram salvas.", "There are changes that have not been saved yet.", "Hay cambios que aún no se han guardado.")).color(TEXT_DIM));
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
-                    if theme::button(ui, Kind::Primary, None, "Salvar e sair", true).clicked() {
+                    if theme::button(ui, Kind::Primary, None, tr("Salvar e sair", "Save and quit", "Guardar y salir"), true).clicked() {
                         self.save_all();
                         if !self.any_dirty() {
                             self.allow_close = true;
@@ -600,11 +638,11 @@ impl ConfigApp {
                         }
                         self.confirm_close = false;
                     }
-                    if theme::button(ui, Kind::Ghost, None, "Sair sem salvar", true).clicked() {
+                    if theme::button(ui, Kind::Ghost, None, tr("Sair sem salvar", "Quit without saving", "Salir sin guardar"), true).clicked() {
                         self.allow_close = true;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
-                    if theme::button(ui, Kind::Ghost, None, "Cancelar", true).clicked() {
+                    if theme::button(ui, Kind::Ghost, None, tr("Cancelar", "Cancel", "Cancelar"), true).clicked() {
                         self.confirm_close = false;
                     }
                 });
@@ -620,7 +658,7 @@ impl eframe::App for ConfigApp {
         if let Err(e) = &self.store {
             let e = e.clone();
             egui::CentralPanel::default().show(ctx, |ui| {
-                ui.heading("Não foi possível abrir a configuração");
+                ui.heading(tr("Não foi possível abrir a configuração", "Could not open the configuration", "No se pudo abrir la configuración"));
                 ui.label(e);
             });
             return;
@@ -688,6 +726,12 @@ enum Legend {
     Selected,
     Off,
     Pressed,
+}
+
+/// Idioma do Windows, usado enquanto o usuário não escolhe um.
+fn system_language() -> UiLang {
+    let langid = unsafe { windows_sys::Win32::Globalization::GetUserDefaultUILanguage() };
+    UiLang::from_windows_langid(langid)
 }
 
 fn legend(ui: &mut egui::Ui, text: &str, kind: Legend) {

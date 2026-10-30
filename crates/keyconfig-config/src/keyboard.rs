@@ -3,7 +3,7 @@
 
 use eframe::egui::{self, pos2, vec2, Align2, Color32, Painter, Rect, Sense, Shadow, Shape, Stroke};
 use keyconfig_core::geometry::{self, KeyRect};
-use keyconfig_core::{Action, KeyCode, Language, Profile};
+use keyconfig_core::{tr, Action, KeyCode, Language, Profile};
 
 use crate::theme::{self, ACCENT, BORDER, SIDEBAR, TEXT, TEXT_2, TEXT_MUTED};
 
@@ -28,10 +28,10 @@ pub const PRESSED: Color32 = Color32::from_rgb(0x4a, 0xde, 0x80);
 pub fn summary(action: &Action, language: Language) -> String {
     match action {
         Action::Key { to } => match geometry::label(*to, language) {
-            "" => "Espaço".to_owned(),
+            "" => geometry::space_name().to_owned(),
             label => label.to_owned(),
         },
-        Action::Disabled => "Desligada".to_owned(),
+        Action::Disabled => tr("Desligada", "Off", "Desactivada").to_owned(),
         Action::Shortcut { keys } => keys
             .iter()
             .map(|&k| geometry::label(k, language))
@@ -40,9 +40,9 @@ pub fn summary(action: &Action, language: Language) -> String {
         Action::Macro { .. } => "Macro".to_owned(),
         // Um caractere só (ex.: "~") aparece na tecla em vez de "Texto".
         Action::Text { text } if text.chars().count() == 1 => text.clone(),
-        Action::Text { .. } => "Texto".to_owned(),
+        Action::Text { .. } => tr("Texto", "Text", "Texto").to_owned(),
         Action::DeadKey { accent } => accent.to_string(),
-        Action::Run { .. } => "Abrir".to_owned(),
+        Action::Run { .. } => tr("Abrir", "Open", "Abrir").to_owned(),
     }
 }
 
@@ -126,11 +126,17 @@ pub fn show(
     }
 
     if over_fn {
-        response.on_hover_text_at_pointer(
+        response.on_hover_text_at_pointer(tr(
             "A tecla Fn é tratada pelo próprio teclado e nunca chega ao Windows, \
              então nenhum programa consegue remapeá-la.\n\
              As combinações com Fn (ex.: Fn + F1) chegam como teclas normais e podem ser mapeadas.",
-        );
+            "The Fn key is handled by the keyboard itself and never reaches Windows, \
+             so no program can remap it.\n\
+             Fn combinations (e.g. Fn + F1) arrive as regular keys and can be mapped.",
+            "La tecla Fn la gestiona el propio teclado y nunca llega a Windows, \
+             así que ningún programa puede reasignarla.\n\
+             Las combinaciones con Fn (p. ej. Fn + F1) llegan como teclas normales y se pueden asignar.",
+        ));
     } else if response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
@@ -189,7 +195,7 @@ fn draw_key(painter: &Painter, key: &KeyRect, parts: &[Rect], s: &KeyState, lang
     };
 
     let label = match geometry::label(key.code, language) {
-        "" => "Espaço",
+        "" => geometry::space_name(),
         l => l,
     };
     if key.code == KeyCode::Space && !remapped {

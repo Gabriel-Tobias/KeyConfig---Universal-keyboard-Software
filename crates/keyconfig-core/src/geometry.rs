@@ -2,7 +2,7 @@
 //!
 //! Medidas em "unidades" (1u = largura de uma tecla de letra).
 
-use crate::{KeyCode, Language, Layout};
+use crate::{tr, KeyCode, Language, Layout, UiLang};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct KeyRect {
@@ -26,17 +26,16 @@ pub fn fn_slots(layout: Layout, language: Language) -> Vec<[f32; 4]> {
     build(layout, language).fn_slots
 }
 
-fn build(layout: Layout, language: Language) -> Builder {
-    let iso = language == Language::PtBrAbnt2;
+fn build(layout: Layout, lang: Language) -> Builder {
     let mut b = Builder::default();
     match layout {
-        Layout::Compact40 => compact40(&mut b, iso),
+        Layout::Compact40 => compact40(&mut b, lang),
         Layout::Compact60 => {
-            alpha_block(&mut b, iso, 0.0, Escape60::Yes, 2.75);
+            alpha_block(&mut b, lang, 0.0, Escape60::Yes, 2.75);
             bottom_row_full(&mut b, 4.0, true);
         }
         Layout::Compact65 => {
-            alpha_block(&mut b, iso, 0.0, Escape60::Yes, 1.75);
+            alpha_block(&mut b, lang, 0.0, Escape60::Yes, 1.75);
             b.at(15.0, 0.0).key(KeyCode::Delete, 1.0);
             b.at(15.0, 1.0).key(KeyCode::PageUp, 1.0);
             b.at(15.0, 2.0).key(KeyCode::PageDown, 1.0);
@@ -46,18 +45,18 @@ fn build(layout: Layout, language: Language) -> Builder {
         Layout::Compact75 => {
             compact_function_row(&mut b);
             b.gap(0.25).key(KeyCode::PrintScreen, 1.0).key(KeyCode::Delete, 1.0);
-            alpha_block(&mut b, iso, 1.25, Escape60::No, 1.75);
+            alpha_block(&mut b, lang, 1.25, Escape60::No, 1.75);
             b.at(15.0, 1.25).key(KeyCode::Home, 1.0);
             b.at(15.0, 2.25).key(KeyCode::PageUp, 1.0);
             b.at(15.0, 3.25).key(KeyCode::PageDown, 1.0);
             b.at(14.0, 4.25).key(KeyCode::ArrowUp, 1.0).key(KeyCode::End, 1.0);
             bottom_row_compact(&mut b, 5.25);
         }
-        Layout::Tenkeyless => tenkeyless(&mut b, iso),
-        Layout::Compact96 => compact96(&mut b, iso),
+        Layout::Tenkeyless => tenkeyless(&mut b, lang),
+        Layout::Compact96 => compact96(&mut b, lang),
         Layout::Full => {
-            tenkeyless(&mut b, iso);
-            numpad(&mut b, iso, 18.5, 1.25, true);
+            tenkeyless(&mut b, lang);
+            numpad(&mut b, lang, 18.5, 1.25, true);
         }
     }
     b
@@ -67,7 +66,18 @@ fn build(layout: Layout, language: Language) -> Builder {
 pub fn label(code: KeyCode, language: Language) -> &'static str {
     use KeyCode::*;
     let abnt2 = language == Language::PtBrAbnt2;
+    let spanish = language == Language::EsEs;
     match code {
+        Backquote if spanish => "º",
+        Minus if spanish => "'",
+        Equal if spanish => "¡",
+        BracketLeft if spanish => "`",
+        BracketRight if spanish => "+",
+        Backslash if spanish => "ç",
+        Semicolon if spanish => "Ñ",
+        Quote if spanish => "´",
+        Slash if spanish => "-",
+        IntlBackslash if spanish => "<",
         Backquote if abnt2 => "'",
         BracketLeft if abnt2 => "´",
         BracketRight if abnt2 => "[",
@@ -121,32 +131,49 @@ pub fn label(code: KeyCode, language: Language) -> &'static str {
         Numpad0 => "0", Numpad1 => "1", Numpad2 => "2", Numpad3 => "3", Numpad4 => "4",
         Numpad5 => "5", Numpad6 => "6", Numpad7 => "7", Numpad8 => "8", Numpad9 => "9",
         IntlBackslash => "\\",
-        AudioVolumeMute => "Mudo", AudioVolumeDown => "Vol -", AudioVolumeUp => "Vol +",
-        MediaTrackNext => "Próxima", MediaTrackPrevious => "Anterior", MediaStop => "Parar",
+        AudioVolumeMute => tr("Mudo", "Mute", "Silencio"),
+        AudioVolumeDown => "Vol -",
+        AudioVolumeUp => "Vol +",
+        MediaTrackNext => tr("Próxima", "Next", "Siguiente"),
+        MediaTrackPrevious => tr("Anterior", "Previous", "Anterior"),
+        MediaStop => tr("Parar", "Stop", "Detener"),
         MediaPlayPause => "Play/Pause",
     }
+}
+
+/// Nome da barra de espaço, no idioma da interface.
+pub fn space_name() -> &'static str {
+    tr("Espaço", "Space", "Espacio")
 }
 
 /// Nome sem ambiguidade, para listas de escolha ("Shift esquerdo", "Num 7"...).
 pub fn describe(code: KeyCode, language: Language) -> String {
     use KeyCode::*;
-    let side = match code {
-        ShiftLeft | ControlLeft | AltLeft | MetaLeft => " esquerdo",
-        ShiftRight | ControlRight | MetaRight => " direito",
-        AltRight if label(code, language) == "Alt" => " direito",
-        _ => "",
-    };
     let label = label(code, language);
+    let left = matches!(code, ShiftLeft | ControlLeft | AltLeft | MetaLeft);
+    let right = matches!(code, ShiftRight | ControlRight | MetaRight) || (code == AltRight && label == "Alt");
     let numpad = code.name().starts_with("Numpad") || code == NumLock;
+    let media = matches!(
+        code,
+        AudioVolumeMute | AudioVolumeDown | AudioVolumeUp | MediaTrackNext | MediaTrackPrevious | MediaStop | MediaPlayPause
+    );
     match code {
-        Space => "Espaço".to_owned(),
-        AudioVolumeMute | AudioVolumeDown | AudioVolumeUp => format!("Mídia: {label}"),
-        MediaTrackNext | MediaTrackPrevious | MediaStop | MediaPlayPause => {
-            format!("Mídia: {label}")
-        }
+        Space => space_name().to_owned(),
+        _ if media => format!("{}: {label}", tr("Mídia", "Media", "Multimedia")),
         NumLock => "Num Lock".to_owned(),
         _ if numpad => format!("Num {label}"),
-        _ => format!("{label}{side}"),
+        // Em inglês o lado vem antes ("Left Shift"); em português e espanhol, depois.
+        _ if left => match crate::i18n::current() {
+            UiLang::En => format!("Left {label}"),
+            UiLang::Pt => format!("{label} esquerdo"),
+            UiLang::Es => format!("{label} izquierdo"),
+        },
+        _ if right => match crate::i18n::current() {
+            UiLang::En => format!("Right {label}"),
+            UiLang::Pt => format!("{label} direito"),
+            UiLang::Es => format!("{label} derecho"),
+        },
+        _ => label.to_owned(),
     }
 }
 
@@ -218,8 +245,9 @@ const BOTTOM_LETTERS: [KeyCode; 7] = {
 };
 
 /// Bloco principal (número, letras e Shifts), 15u de largura, começando em `y`.
-fn alpha_block(b: &mut Builder, iso: bool, y: f32, escape: Escape60, right_shift: f32) {
+fn alpha_block(b: &mut Builder, lang: Language, y: f32, escape: Escape60, right_shift: f32) {
     use KeyCode::*;
+    let iso = lang.is_iso();
     // Em 60% e 65% o Esc ocupa o lugar do ` (o ` fica numa camada Fn do teclado).
     let first = if escape == Escape60::Yes { Escape } else { Backquote };
     b.at(0.0, y).key(first, 1.0).keys(&DIGITS, 1.0).key(Minus, 1.0).key(Equal, 1.0).key(Backspace, 2.0);
@@ -252,7 +280,8 @@ fn alpha_block(b: &mut Builder, iso: bool, y: f32, escape: Escape60, right_shift
         b.key(ShiftLeft, 2.25);
     }
     b.keys(&BOTTOM_LETTERS, 1.0).key(Comma, 1.0).key(Period, 1.0).key(Slash, 1.0);
-    if iso {
+    // O ABNT2 tem uma tecla a mais (/?) antes do Shift direito.
+    if lang == Language::PtBrAbnt2 {
         b.key(IntlRo, 1.0).key(ShiftRight, right_shift - 1.0);
     } else {
         b.key(ShiftRight, right_shift);
@@ -282,7 +311,7 @@ fn bottom_row_compact(b: &mut Builder, y: f32) {
         .key(ArrowLeft, 1.0).key(ArrowDown, 1.0).key(ArrowRight, 1.0);
 }
 
-fn tenkeyless(b: &mut Builder, iso: bool) {
+fn tenkeyless(b: &mut Builder, lang: Language) {
     use KeyCode::*;
     b.at(0.0, 0.0).key(Escape, 1.0);
     b.gap(1.0).keys(&[F1, F2, F3, F4], 1.0);
@@ -290,7 +319,7 @@ fn tenkeyless(b: &mut Builder, iso: bool) {
     b.gap(0.5).keys(&[F9, F10, F11, F12], 1.0);
     b.gap(0.25).keys(&[PrintScreen, ScrollLock, Pause], 1.0);
 
-    alpha_block(b, iso, 1.25, Escape60::No, 2.75);
+    alpha_block(b, lang, 1.25, Escape60::No, 2.75);
     bottom_row_full(b, 5.25, false);
 
     b.at(15.25, 1.25).keys(&[Insert, Home, PageUp], 1.0);
@@ -301,12 +330,12 @@ fn tenkeyless(b: &mut Builder, iso: bool) {
 
 /// Teclado numérico com o canto superior esquerdo em (`x`, `y`). Nos 96% o 0 é
 /// estreito, porque a seta para a direita ocupa o lugar dele.
-fn numpad(b: &mut Builder, iso: bool, x: f32, y: f32, wide_zero: bool) {
+fn numpad(b: &mut Builder, lang: Language, x: f32, y: f32, wide_zero: bool) {
     use KeyCode::*;
     b.at(x, y).keys(&[NumLock, NumpadDivide, NumpadMultiply, NumpadSubtract], 1.0);
     b.at(x, y + 1.0).keys(&[Numpad7, Numpad8, Numpad9], 1.0);
     // No ABNT2 o + é menor para caber a tecla de ponto extra.
-    if iso {
+    if lang == Language::PtBrAbnt2 {
         b.key(NumpadAdd, 1.0);
         b.at(x, y + 2.0).keys(&[Numpad4, Numpad5, Numpad6, NumpadComma], 1.0);
     } else {
@@ -331,25 +360,26 @@ fn compact_function_row(b: &mut Builder) {
 }
 
 /// 96% / "1800": numérico colado ao bloco principal e setas abaixo do Shift direito.
-fn compact96(b: &mut Builder, iso: bool) {
+fn compact96(b: &mut Builder, lang: Language) {
     use KeyCode::*;
     compact_function_row(b);
     b.gap(0.25).key(Delete, 1.0);
     b.at(15.5, 0.0).keys(&[Home, End, PageUp, PageDown], 1.0);
 
-    alpha_block(b, iso, 1.25, Escape60::No, 1.75);
+    alpha_block(b, lang, 1.25, Escape60::No, 1.75);
     b.at(14.25, 4.25).key(ArrowUp, 1.0);
     b.at(0.0, 5.25)
         .key(ControlLeft, 1.25).key(MetaLeft, 1.25).key(AltLeft, 1.25).key(Space, 6.25)
         .key(AltRight, 1.0).fn_key(1.0).key(ControlRight, 1.0)
         .gap(0.25).key(ArrowLeft, 1.0).key(ArrowDown, 1.0).key(ArrowRight, 1.0);
 
-    numpad(b, iso, 15.5, 1.25, false);
+    numpad(b, lang, 15.5, 1.25, false);
 }
 
 /// 40%: só letras e a linha de baixo; números e F1–F12 ficam na camada Fn do teclado.
-fn compact40(b: &mut Builder, iso: bool) {
+fn compact40(b: &mut Builder, lang: Language) {
     use KeyCode::*;
+    let iso = lang.is_iso();
     b.at(0.0, 0.0).key(Escape, 1.25).keys(&TOP_LETTERS, 1.0).key(Backspace, 1.5);
     b.at(0.0, 1.0).key(CapsLock, 1.5).keys(&HOME_LETTERS, 1.0).key(Semicolon, 1.0).key(Enter, 1.25);
     b.at(0.0, 2.0);
@@ -371,7 +401,7 @@ mod tests {
     use std::collections::HashSet;
 
     const LAYOUTS: [Layout; 7] = Layout::ALL;
-    const LANGUAGES: [Language; 3] = [Language::PtBrAbnt2, Language::EnUs, Language::EnUsIntl];
+    const LANGUAGES: [Language; 4] = Language::ALL;
 
     #[test]
     fn no_duplicate_keys() {
@@ -410,6 +440,17 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn spanish_is_iso_without_abnt2_extras() {
+        let codes: Vec<KeyCode> = keys(Layout::Full, Language::EsEs).iter().map(|k| k.code).collect();
+        assert!(codes.contains(&KeyCode::IntlBackslash));
+        assert!(!codes.contains(&KeyCode::IntlRo));
+        assert!(!codes.contains(&KeyCode::NumpadComma));
+        let enter = keys(Layout::Full, Language::EsEs).into_iter().find(|k| k.code == KeyCode::Enter).unwrap();
+        assert!(enter.extra.is_some(), "Enter ISO em L");
+        assert_eq!(label(KeyCode::Semicolon, Language::EsEs), "Ñ");
     }
 
     #[test]

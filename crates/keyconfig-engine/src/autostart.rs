@@ -13,6 +13,8 @@ use windows_sys::Win32::System::Registry::{
     RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ,
 };
 
+use keyconfig_core::tr;
+
 use crate::util::wide;
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -51,7 +53,12 @@ pub fn enable(elevated: bool) -> Result<(), String> {
 pub fn disable() -> Result<(), String> {
     delete_run_value();
     if task_exists() && !schtasks(&["/Delete", "/TN", NAME, "/F"]) {
-        return Err("é preciso estar como administrador para desligar a inicialização elevada".into());
+        return Err(tr(
+            "é preciso estar como administrador para desligar a inicialização elevada",
+            "you need to be running as administrator to turn off the elevated startup",
+            "hay que ejecutarse como administrador para desactivar el inicio elevado",
+        )
+        .into());
     }
     Ok(())
 }
@@ -143,7 +150,12 @@ fn create_task(exe: &str) -> Result<(), String> {
     if ok {
         Ok(())
     } else {
-        Err("o Agendador de Tarefas recusou a criação da tarefa".into())
+        Err(tr(
+            "o Agendador de Tarefas recusou a criação da tarefa",
+            "Task Scheduler refused to create the task",
+            "el Programador de tareas rechazó crear la tarea",
+        )
+        .into())
     }
 }
 

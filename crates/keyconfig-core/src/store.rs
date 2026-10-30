@@ -16,19 +16,23 @@ use std::path::{Path, PathBuf};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::Profile;
+use crate::{tr, Profile, UiLang};
 
 pub const DEFAULT_PROFILE_ID: &str = "default";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     pub active_profile: String,
+    /// Idioma da interface; sem valor, segue o idioma do Windows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_language: Option<UiLang>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
             active_profile: DEFAULT_PROFILE_ID.to_owned(),
+            ui_language: None,
         }
     }
 }
@@ -45,14 +49,23 @@ pub enum StoreError {
 impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            StoreError::NoAppData => write!(f, "a variável APPDATA não está definida"),
+            StoreError::NoAppData => f.write_str(tr(
+                "a variável APPDATA não está definida",
+                "the APPDATA variable is not set",
+                "la variable APPDATA no está definida",
+            )),
             StoreError::InvalidProfileId(id) => write!(
                 f,
-                "nome de perfil inválido: \"{id}\" (use só letras, números, - e _)"
+                "{}: \"{id}\" ({})",
+                tr("nome de perfil inválido", "invalid profile name", "nombre de perfil no válido"),
+                tr("use só letras, números, - e _", "use only letters, numbers, - and _", "usa solo letras, números, - y _"),
             ),
-            StoreError::ProfileNotFound(path) => {
-                write!(f, "perfil não encontrado: {}", path.display())
-            }
+            StoreError::ProfileNotFound(path) => write!(
+                f,
+                "{}: {}",
+                tr("perfil não encontrado", "profile not found", "perfil no encontrado"),
+                path.display()
+            ),
             StoreError::Io(path, e) => write!(f, "{}: {e}", path.display()),
             StoreError::Json(path, e) => write!(f, "{}: {e}", path.display()),
         }

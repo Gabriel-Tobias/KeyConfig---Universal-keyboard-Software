@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::ptr::null_mut;
 
-use keyconfig_core::ipc;
+use keyconfig_core::{ipc, tr};
 use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM};
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -35,7 +35,15 @@ pub fn open() {
         tray::notify(
             Notice::Error,
             "KeyConfig",
-            &format!("Não encontrei o configurador ({}) na pasta do KeyConfig.", ipc::CONFIG_EXE),
+            &format!(
+                "{} ({})",
+                tr(
+                    "Não encontrei o configurador na pasta do KeyConfig",
+                    "Could not find the configurator in the KeyConfig folder",
+                    "No se encontró el configurador en la carpeta de KeyConfig",
+                ),
+                ipc::CONFIG_EXE
+            ),
         );
     }
 }

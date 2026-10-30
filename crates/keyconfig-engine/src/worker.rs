@@ -9,7 +9,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use keyconfig_core::{Action, KeyCode, MacroStep};
+use keyconfig_core::{tr, Action, KeyCode, MacroStep};
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::System::Com::{
     CoInitializeEx, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
@@ -112,6 +112,6 @@ fn run_command(command: &str, args: &str) -> Result<(), String> {
     if result as isize > 32 {
         Ok(())
     } else {
-        Err(format!("não foi possível abrir \"{command}\""))
+        Err(format!("{} \"{command}\"", tr("não foi possível abrir", "could not open", "no se pudo abrir")))
     }
 }

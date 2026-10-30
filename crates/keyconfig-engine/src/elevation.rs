@@ -23,7 +23,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WINEVENT_SKIPOWNPROCESS,
 };
 
-use keyconfig_core::ipc;
+use keyconfig_core::{ipc, tr};
 
 use crate::hook;
 use crate::tray::{self, Notice};
@@ -106,10 +106,17 @@ unsafe extern "system" fn on_foreground(
     if WARNED.with_borrow_mut(|warned| warned.insert(name.to_lowercase())) {
         tray::notify(
             Notice::Warning,
-            "KeyConfig sem acesso a este programa",
+            tr("KeyConfig sem acesso a este programa", "KeyConfig has no access to this program", "KeyConfig no tiene acceso a este programa"),
             &format!(
-                "\"{name}\" está rodando como administrador, então seus mapeamentos não funcionam nele. \
-                 Clique com o botão direito no ícone do KeyConfig e escolha \"Executar como administrador\"."
+                "\"{name}\" {}",
+                tr(
+                    "está rodando como administrador, então seus mapeamentos não funcionam nele. \
+                     Clique com o botão direito no ícone do KeyConfig e escolha \"Executar como administrador\".",
+                    "is running as administrator, so your mappings do not work in it. \
+                     Right-click the KeyConfig icon and choose \"Run as administrator\".",
+                    "se está ejecutando como administrador, así que tus asignaciones no funcionan en él. \
+                     Haz clic derecho en el icono de KeyConfig y elige \"Ejecutar como administrador\".",
+                )
             ),
         );
     }

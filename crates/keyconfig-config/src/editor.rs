@@ -5,7 +5,7 @@
 
 use eframe::egui::{self, vec2, Align2, Color32, Frame, Margin, Rect, RichText, Sense, Stroke};
 use keyconfig_core::geometry;
-use keyconfig_core::{Action, KeyCode, Language, MacroStep, Profile};
+use keyconfig_core::{tr, Action, KeyCode, Language, MacroStep, Profile};
 
 use crate::keyboard::summary;
 use crate::theme::{
@@ -28,12 +28,12 @@ impl Page {
 
     fn label(self) -> &'static str {
         match self {
-            Page::Keyboard => "Teclado",
-            Page::Media => "Multimídia",
-            Page::Combination => "Combinação",
+            Page::Keyboard => tr("Teclado", "Keyboard", "Teclado"),
+            Page::Media => tr("Multimídia", "Media", "Multimedia"),
+            Page::Combination => tr("Combinação", "Shortcut", "Combinación"),
             Page::Macro => "Macro",
-            Page::Text => "Texto",
-            Page::Run => "Abrir programa",
+            Page::Text => tr("Texto", "Text", "Texto"),
+            Page::Run => tr("Abrir programa", "Open program", "Abrir programa"),
         }
     }
 
@@ -75,12 +75,12 @@ impl Category {
 
     fn label(self) -> &'static str {
         match self {
-            Category::Common => "Comuns",
-            Category::Advanced => "Avançadas",
-            Category::Numpad => "Numérico",
-            Category::Modifiers => "Modificadores",
-            Category::Accents => "Acentos",
-            Category::Characters => "Caracteres",
+            Category::Common => tr("Comuns", "Common", "Comunes"),
+            Category::Advanced => tr("Avançadas", "Advanced", "Avanzadas"),
+            Category::Numpad => tr("Numérico", "Numpad", "Numérico"),
+            Category::Modifiers => tr("Modificadores", "Modifiers", "Modificadores"),
+            Category::Accents => tr("Acentos", "Accents", "Acentos"),
+            Category::Characters => tr("Caracteres", "Characters", "Caracteres"),
         }
     }
 
@@ -95,7 +95,7 @@ impl Category {
                 .iter()
                 .map(|&accent| Chip {
                     label: accent.to_string(),
-                    hint: format!("Acento {accent}: combina com a próxima letra"),
+                    hint: format!("{} {accent}: {}", tr("Acento", "Accent", "Acento"), combines_hint()),
                     action: Action::DeadKey { accent },
                 })
                 .collect(),
@@ -103,7 +103,7 @@ impl Category {
                 .iter()
                 .map(|&c| Chip {
                     label: c.to_owned(),
-                    hint: format!("Digita {c}"),
+                    hint: format!("{} {c}", tr("Digita", "Types", "Escribe")),
                     action: Action::Text { text: c.to_owned() },
                 })
                 .collect(),
@@ -280,19 +280,19 @@ impl Editor {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         let (text, color) = match profile.mappings.get(&key) {
                             Some(action) => (describe_action(action, lang), ACCENT),
-                            None => ("Comportamento padrão".to_owned(), TEXT),
+                            None => (tr("Comportamento padrão", "Default behavior", "Comportamiento predeterminado").to_owned(), TEXT),
                         };
                         ui.label(RichText::new(text).font(theme::semibold(16.0)).color(color));
-                        ui.label(RichText::new("Escolha abaixo o que esta tecla deve fazer").size(12.0).color(TEXT_FAINT));
+                        ui.label(RichText::new(tr("Escolha abaixo o que esta tecla deve fazer", "Choose below what this key should do", "Elige abajo qué debe hacer esta tecla")).size(12.0).color(TEXT_FAINT));
                     });
                 });
                 theme::trailing(ui, 320.0, |ui| {
                     let mapped = profile.mappings.contains_key(&key);
-                    if theme::button(ui, Kind::Ghost, Some(icon::RESET), "Restaurar padrão", mapped).clicked() {
+                    if theme::button(ui, Kind::Ghost, Some(icon::RESET), tr("Restaurar padrão", "Restore default", "Restaurar"), mapped).clicked() {
                         profile.mappings.remove(&key);
                     }
                     let off = profile.mappings.get(&key) == Some(&Action::Disabled);
-                    if theme::button(ui, Kind::Danger, Some(icon::POWER), "Desligar tecla", !off).clicked() {
+                    if theme::button(ui, Kind::Danger, Some(icon::POWER), tr("Desligar tecla", "Turn key off", "Desactivar tecla"), !off).clicked() {
                         profile.mappings.insert(key, Action::Disabled);
                     }
                 });
@@ -324,12 +324,12 @@ impl Editor {
                     let chips: Vec<Chip> = MEDIA
                         .iter()
                         .map(|&k| Chip {
-                            label: geometry::describe(k, lang).replace("Mídia: ", ""),
+                            label: geometry::label(k, lang).to_owned(),
                             hint: geometry::describe(k, lang),
                             action: Action::Key { to: k },
                         })
                         .collect();
-                    ui.label(RichText::new("Controle de música e volume, em qualquer programa.").color(TEXT_DIM));
+                    ui.label(RichText::new(tr("Controle de música e volume, em qualquer programa.", "Music and volume control, in any program.", "Control de música y volumen, en cualquier programa.")).color(TEXT_DIM));
                     if let Some(action) = chip_grid(ui, &chips, current.as_ref(), 120.0) {
                         profile.mappings.insert(key, action);
                     }
@@ -346,7 +346,7 @@ impl Editor {
                 }
                 Page::Text => {
                     ui.label(
-                        RichText::new("O texto é digitado do jeito que está escrito, com acentos, em qualquer idioma de teclado.")
+                        RichText::new(tr("O texto é digitado do jeito que está escrito, com acentos, em qualquer idioma de teclado.", "The text is typed exactly as written, with accents, in any keyboard language.", "El texto se escribe tal cual, con tildes, en cualquier idioma de teclado."))
                             .color(TEXT_DIM),
                     );
                     ui.add(
@@ -354,34 +354,34 @@ impl Editor {
                             .desired_rows(5)
                             .desired_width(f32::INFINITY)
                             .margin(Margin::same(12.0))
-                            .hint_text("Ex.: Atenciosamente,\nGabriel"),
+                            .hint_text(tr("Ex.: Atenciosamente,\nGabriel", "E.g.: Best regards,\nGabriel", "Ej.: Saludos cordiales,\nGabriel")),
                     );
-                    if theme::button(ui, Kind::Primary, None, "Aplicar", !self.drafts.text.is_empty()).clicked() {
+                    if theme::button(ui, Kind::Primary, None, tr("Aplicar", "Apply", "Aplicar"), !self.drafts.text.is_empty()).clicked() {
                         profile.mappings.insert(key, Action::Text { text: self.drafts.text.clone() });
                     }
                 }
                 Page::Run => {
-                    ui.label(RichText::new("Abre um programa, arquivo, pasta ou site.").color(TEXT_DIM));
+                    ui.label(RichText::new(tr("Abre um programa, arquivo, pasta ou site.", "Opens a program, file, folder or website.", "Abre un programa, archivo, carpeta o sitio web.")).color(TEXT_DIM));
                     egui::Grid::new("run").num_columns(2).spacing([12.0, 10.0]).show(ui, |ui| {
-                        theme::field_label(ui, "Abrir");
+                        theme::field_label(ui, tr("Abrir", "Open", "Abrir"));
                         ui.add(
                             egui::TextEdit::singleline(&mut self.drafts.command)
                                 .desired_width(480.0)
                                 .margin(Margin::symmetric(12.0, 9.0))
-                                .hint_text(r"notepad.exe, C:\Jogos\jogo.exe ou https://..."),
+                                .hint_text(tr(r"notepad.exe, C:\Jogos\jogo.exe ou https://...", r"notepad.exe, C:\Games\game.exe or https://...", r"notepad.exe, C:\Juegos\juego.exe o https://...")),
                         );
                         ui.end_row();
-                        theme::field_label(ui, "Argumentos");
+                        theme::field_label(ui, tr("Argumentos", "Arguments", "Argumentos"));
                         ui.add(
                             egui::TextEdit::singleline(&mut self.drafts.args)
                                 .desired_width(480.0)
                                 .margin(Margin::symmetric(12.0, 9.0))
-                                .hint_text("opcional"),
+                                .hint_text(tr("opcional", "optional", "opcional")),
                         );
                         ui.end_row();
                     });
                     let ok = !self.drafts.command.trim().is_empty();
-                    if theme::button(ui, Kind::Primary, None, "Aplicar", ok).clicked() {
+                    if theme::button(ui, Kind::Primary, None, tr("Aplicar", "Apply", "Aplicar"), ok).clicked() {
                         profile.mappings.insert(
                             key,
                             Action::Run {
@@ -423,7 +423,7 @@ impl Editor {
         let chips: Vec<Chip> = if query.is_empty() {
             if self.category == Category::Accents {
                 ui.label(
-                    RichText::new("Combinam com a próxima letra: ~ + a = ã. Com espaço, sai só o acento.")
+                    RichText::new(tr("Combinam com a próxima letra: ~ + a = ã. Com espaço, sai só o acento.", "They combine with the next letter: ~ + a = ã. With space, you get just the accent.", "Se combinan con la siguiente letra: ~ + a = ã. Con espacio, sale solo el acento."))
                         .size(12.0)
                         .color(TEXT_DIM),
                 );
@@ -442,7 +442,7 @@ impl Editor {
             found
         };
         if chips.is_empty() {
-            ui.label(RichText::new("Nenhuma tecla encontrada.").color(TEXT_FAINT));
+            ui.label(RichText::new(tr("Nenhuma tecla encontrada.", "No key found.", "No se encontró ninguna tecla.")).color(TEXT_FAINT));
             return None;
         }
         chip_grid(ui, &chips, current, 64.0)
@@ -452,7 +452,7 @@ impl Editor {
         let mut result = None;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            theme::field_label(ui, "Segurar");
+            theme::field_label(ui, tr("Segurar", "Hold", "Mantener"));
             for (i, (_, name)) in COMBO_MODS.iter().enumerate() {
                 if theme::chip_toggle(ui, name, None, self.drafts.mods[i]).clicked() {
                     self.drafts.mods[i] = !self.drafts.mods[i];
@@ -461,14 +461,14 @@ impl Editor {
             ui.add_space(12.0);
             let keys = self.drafts.shortcut_keys();
             let preview = if self.drafts.combo_key.is_none() {
-                "escolha a tecla abaixo".to_owned()
+                tr("escolha a tecla abaixo", "choose the key below", "elige la tecla abajo").to_owned()
             } else {
                 keys.iter().map(|&k| geometry::label(k, lang)).collect::<Vec<_>>().join(" + ")
             };
             let color = if self.drafts.combo_key.is_some() { ACCENT } else { TEXT_FAINT };
             ui.label(RichText::new(preview).font(theme::mono(14.0)).color(color));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if theme::button(ui, Kind::Primary, None, "Aplicar", self.drafts.combo_key.is_some()).clicked() {
+                if theme::button(ui, Kind::Primary, None, tr("Aplicar", "Apply", "Aplicar"), self.drafts.combo_key.is_some()).clicked() {
                     result = Some(Action::Shortcut { keys });
                 }
             });
@@ -483,28 +483,28 @@ impl Editor {
     fn macro_editor(&mut self, ui: &mut egui::Ui, lang: Language) -> Option<Action> {
         let steps = &mut self.drafts.steps;
         ui.horizontal_wrapped(|ui| {
-            theme::field_label(ui, "Adicionar");
+            theme::field_label(ui, tr("Adicionar", "Add", "Añadir"));
             let last_key = steps.iter().rev().find_map(step_key).unwrap_or(KeyA);
             let add = |ui: &mut egui::Ui, text: &str| theme::button(ui, Kind::Normal, Some(icon::ADD), text, true).clicked();
-            if add(ui, "Tocar tecla") {
+            if add(ui, tr("Tocar tecla", "Tap key", "Pulsar tecla")) {
                 steps.push(MacroStep::Tap(last_key));
             }
-            if add(ui, "Segurar tecla") {
+            if add(ui, tr("Segurar tecla", "Hold key", "Mantener tecla")) {
                 steps.push(MacroStep::Down(last_key));
             }
-            if add(ui, "Soltar tecla") {
+            if add(ui, tr("Soltar tecla", "Release key", "Soltar tecla")) {
                 steps.push(MacroStep::Up(last_key));
             }
-            if add(ui, "Pausa") {
+            if add(ui, tr("Pausa", "Pause", "Pausa")) {
                 steps.push(MacroStep::DelayMs(100));
             }
-            if add(ui, "Texto") {
+            if add(ui, tr("Texto", "Text", "Texto")) {
                 steps.push(MacroStep::Text(String::new()));
             }
         });
 
         if steps.is_empty() {
-            ui.label(RichText::new("A macro ainda não tem passos.").color(TEXT_FAINT));
+            ui.label(RichText::new(tr("A macro ainda não tem passos.", "The macro has no steps yet.", "La macro aún no tiene pasos.")).color(TEXT_FAINT));
         }
 
         let mut remove = None;
@@ -524,13 +524,13 @@ impl Editor {
                                 ui.label(RichText::new(format!("{:02}", i + 1)).font(theme::mono(13.0)).color(TEXT_FAINT));
                                 step_editor(ui, step, lang);
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if theme::icon_button(ui, icon::DELETE, "Remover", true).clicked() {
+                                    if theme::icon_button(ui, icon::DELETE, tr("Remover", "Remove", "Quitar"), true).clicked() {
                                         remove = Some(i);
                                     }
-                                    if theme::icon_button(ui, "\u{E70D}", "Descer", i + 1 < count).clicked() {
+                                    if theme::icon_button(ui, "\u{E70D}", tr("Descer", "Move down", "Bajar"), i + 1 < count).clicked() {
                                         swap = Some(i);
                                     }
-                                    if theme::icon_button(ui, "\u{E70E}", "Subir", i > 0).clicked() {
+                                    if theme::icon_button(ui, "\u{E70E}", tr("Subir", "Move up", "Subir"), i > 0).clicked() {
                                         swap = Some(i - 1);
                                     }
                                 });
@@ -547,7 +547,7 @@ impl Editor {
         }
 
         let mut action = None;
-        if theme::button(ui, Kind::Primary, None, "Aplicar", !steps.is_empty()).clicked() {
+        if theme::button(ui, Kind::Primary, None, tr("Aplicar", "Apply", "Aplicar"), !steps.is_empty()).clicked() {
             action = Some(Action::Macro { steps: steps.clone() });
         }
         action
@@ -573,9 +573,9 @@ fn empty_state(ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             ui.label(RichText::new(icon::KEYBOARD).font(theme::icon_font(28.0)).color(TEXT_FAINT));
-            ui.label(RichText::new("Selecione uma tecla").font(theme::semibold(15.0)).color(TEXT));
+            ui.label(RichText::new(tr("Selecione uma tecla", "Select a key", "Selecciona una tecla")).font(theme::semibold(15.0)).color(TEXT));
             ui.label(
-                RichText::new("Clique numa tecla do desenho ou use \"Capturar tecla\" para escolher o que ela faz.")
+                RichText::new(tr("Clique numa tecla do desenho ou use \"Capturar tecla\" para escolher o que ela faz.", "Click a key in the drawing or use \"Capture key\" to choose what it does.", "Haz clic en una tecla del dibujo o usa \"Capturar tecla\" para elegir qué hace."))
                     .size(13.0)
                     .color(TEXT_FAINT),
             );
@@ -586,7 +586,7 @@ fn empty_state(ui: &mut egui::Ui) {
 /// A tecla selecionada, como uma tecla âmbar no cabeçalho.
 fn key_badge(ui: &mut egui::Ui, key: KeyCode, lang: Language) {
     let label = match geometry::label(key, lang) {
-        "" => "Espaço",
+        "" => geometry::space_name(),
         l => l,
     };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), theme::mono(15.0), TEXT);
@@ -632,7 +632,7 @@ fn search_field(ui: &mut egui::Ui, query: &mut String) {
                         .frame(false)
                         .desired_width(180.0)
                         .margin(Margin::ZERO)
-                        .hint_text("Buscar tecla…"),
+                        .hint_text(tr("Buscar tecla…", "Search key…", "Buscar tecla…")),
                 );
             });
         });
@@ -683,11 +683,11 @@ fn step_key(step: &MacroStep) -> Option<KeyCode> {
 fn step_editor(ui: &mut egui::Ui, step: &mut MacroStep, lang: Language) {
     let key = step_key(step).unwrap_or(KeyA);
     let kinds = [
-        ("Tocar", MacroStep::Tap(key)),
-        ("Segurar", MacroStep::Down(key)),
-        ("Soltar", MacroStep::Up(key)),
-        ("Pausa", MacroStep::DelayMs(100)),
-        ("Texto", MacroStep::Text(String::new())),
+        (tr("Tocar", "Tap", "Pulsar"), MacroStep::Tap(key)),
+        (tr("Segurar", "Hold", "Mantener"), MacroStep::Down(key)),
+        (tr("Soltar", "Release", "Soltar"), MacroStep::Up(key)),
+        (tr("Pausa", "Pause", "Pausa"), MacroStep::DelayMs(100)),
+        (tr("Texto", "Text", "Texto"), MacroStep::Text(String::new())),
     ];
     let current = kinds
         .iter()
@@ -714,7 +714,7 @@ fn step_editor(ui: &mut egui::Ui, step: &mut MacroStep, lang: Language) {
                 egui::TextEdit::singleline(text)
                     .desired_width(300.0)
                     .margin(Margin::symmetric(10.0, 6.0))
-                    .hint_text("texto"),
+                    .hint_text(tr("texto", "text", "texto")),
             );
         }
     }
@@ -735,15 +735,16 @@ fn key_combo(ui: &mut egui::Ui, key: &mut KeyCode, lang: Language) {
 
 fn button_text(key: KeyCode, lang: Language) -> String {
     match key {
-        ControlLeft => "Ctrl E".into(),
-        ControlRight => "Ctrl D".into(),
-        ShiftLeft => "Shift E".into(),
-        ShiftRight => "Shift D".into(),
-        AltLeft => "Alt E".into(),
-        MetaLeft => "Win E".into(),
-        MetaRight => "Win D".into(),
-        Space => "Espaço".into(),
-        _ if MEDIA.contains(&key) || NUMPAD.contains(&key) => geometry::describe(key, lang).replace("Mídia: ", ""),
+        // Lado abreviado: E/D (esquerdo/direito), L/R (left/right), I/D (izquierdo/derecho).
+        ControlLeft | ShiftLeft | AltLeft | MetaLeft => {
+            format!("{} {}", geometry::label(key, lang), tr("E", "L", "I"))
+        }
+        ControlRight | ShiftRight | MetaRight => {
+            format!("{} {}", geometry::label(key, lang), tr("D", "R", "D"))
+        }
+        Space => geometry::space_name().into(),
+        _ if MEDIA.contains(&key) => geometry::label(key, lang).into(),
+        _ if NUMPAD.contains(&key) => geometry::describe(key, lang),
         _ => geometry::label(key, lang).into(),
     }
 }
@@ -751,13 +752,22 @@ fn button_text(key: KeyCode, lang: Language) -> String {
 fn describe_action(action: &Action, lang: Language) -> String {
     match action {
         Action::Key { to } => geometry::describe(*to, lang),
-        Action::Disabled => "Desligada".to_owned(),
-        Action::Shortcut { .. } => format!("Combinação {}", summary(action, lang)),
-        Action::Macro { steps } => format!("Macro com {} passo(s)", steps.len()),
-        Action::Text { text } => format!("Digita \"{}\"", text.lines().next().unwrap_or("")),
-        Action::DeadKey { accent } => format!("Acento {accent} (combina com a próxima letra)"),
-        Action::Run { command, .. } => format!("Abre {command}"),
+        Action::Disabled => tr("Desligada", "Off", "Desactivada").to_owned(),
+        Action::Shortcut { .. } => format!("{} {}", tr("Combinação", "Shortcut", "Combinación"), summary(action, lang)),
+        Action::Macro { steps } => format!(
+            "{} {} {}",
+            tr("Macro com", "Macro with", "Macro con"),
+            steps.len(),
+            tr("passo(s)", "step(s)", "paso(s)")
+        ),
+        Action::Text { text } => format!("{} \"{}\"", tr("Digita", "Types", "Escribe"), text.lines().next().unwrap_or("")),
+        Action::DeadKey { accent } => format!("{} {accent} ({})", tr("Acento", "Accent", "Acento"), combines_hint()),
+        Action::Run { command, .. } => format!("{} {command}", tr("Abre", "Opens", "Abre")),
     }
+}
+
+fn combines_hint() -> &'static str {
+    tr("combina com a próxima letra", "combines with the next letter", "se combina con la siguiente letra")
 }
 
 /// Corta textos que não cabem (`char_width` é a largura média de um caractere).

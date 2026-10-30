@@ -3,10 +3,12 @@
 
 pub mod accent;
 pub mod geometry;
+pub mod i18n;
 pub mod keycode;
 pub mod profile;
 pub mod store;
 
+pub use i18n::{tr, UiLang};
 pub use keycode::{KeyCode, KeyLookup, KeyOutput};
 pub use profile::{Action, Language, Layout, MacroStep, Profile};
 
