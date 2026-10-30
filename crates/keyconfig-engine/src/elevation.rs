@@ -86,6 +86,7 @@ unsafe extern "system" fn on_foreground(
     _thread: u32,
     _time: u32,
 ) {
+    hook::reinstall_soon();
     let mut pid = 0;
     GetWindowThreadProcessId(hwnd, &mut pid);
     if pid == 0 {

@@ -5,7 +5,7 @@
 //! rápido: se demorar demais o Windows remove o hook sem avisar. Por isso
 //! macros, textos e comandos vão para o [`worker`](crate::worker).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ptr::{null, null_mut};
 use std::sync::Arc;
 
@@ -29,6 +29,9 @@ const VK_SPACE: u32 = 0x20;
 
 /// Quanto o primeiro toque espera pelo segundo antes de valer como toque simples.
 const DOUBLE_TAP_MS: u32 = 300;
+/// Espera para reinstalar o hook depois de trocar de janela, dando tempo de a
+/// área de trabalho remota instalar o dela primeiro.
+const REINSTALL_DELAY_MS: u32 = 500;
 
 /// Ação em andamento numa tecla segurada.
 #[derive(Clone)]
@@ -317,6 +320,7 @@ fn combine(accent: char, vk: u32) -> Option<char> {
 thread_local! {
     static ENGINE: RefCell<Engine> = RefCell::new(Engine::new());
     static HOOK: RefCell<HHOOK> = const { RefCell::new(null_mut()) };
+    static REINSTALL_TIMER: Cell<usize> = const { Cell::new(0) };
 }
 
 pub fn set_profile(profile: &Profile) {
@@ -350,6 +354,31 @@ pub fn install() -> Result<(), String> {
     }
     HOOK.set(hook);
     Ok(())
+}
+
+/// Coloca o hook de volta no topo da cadeia.
+///
+/// O Windows chama primeiro o hook instalado por último. Programas de área de
+/// trabalho remota (mstsc, AnyDesk...) instalam o seu ao ganhar o foco e não
+/// repassam as teclas físicas, então sem isso os remapeamentos não chegam ao remoto.
+/// Reinstala agora e de novo daqui a pouco, caso o deles venha depois.
+pub fn reinstall_soon() {
+    reinstall();
+    kill_timer(REINSTALL_TIMER.get());
+    REINSTALL_TIMER.set(unsafe { SetTimer(null_mut(), 0, REINSTALL_DELAY_MS, Some(reinstall_timeout)) });
+}
+
+unsafe extern "system" fn reinstall_timeout(_: HWND, _: u32, _: usize, _: u32) {
+    kill_timer(REINSTALL_TIMER.replace(0));
+    reinstall();
+}
+
+fn reinstall() {
+    // O callback roda nesta thread, então nenhuma tecla passa pelos dois hooks na troca.
+    let old = HOOK.with_borrow(|h| *h);
+    if !old.is_null() && install().is_ok() {
+        unsafe { UnhookWindowsHookEx(old) };
+    }
 }
 
 pub fn uninstall() {

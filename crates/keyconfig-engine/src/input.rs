@@ -28,6 +28,7 @@ const SIDES: [(i32, KeyCode, Modifier); 8] = [
 const MENU_SIDES: u8 = 0xF0;
 /// Tecla sem uso que, enviada entre o aperto e a soltura de Alt/Win, impede o menu de abrir.
 const MASK_VK: u16 = 0xE8;
+const VK_SNAPSHOT: u8 = 0x2C;
 
 /// Modificadores que o usuário segura de verdade (o hook atualiza a cada evento físico).
 static PHYSICAL: AtomicU8 = AtomicU8::new(0);
@@ -95,7 +96,12 @@ pub fn key(code: KeyCode, up: bool) -> INPUT {
         KeyOutput::Scan(s) => (0, s as u16, KEYEVENTF_SCANCODE),
         KeyOutput::Ext(s) => (0, s as u16, KEYEVENTF_SCANCODE | KEYEVENTF_EXTENDEDKEY),
         KeyOutput::Vk(v, ext) => {
-            let scan = unsafe { MapVirtualKeyW(v as u32, MAPVK_VK_TO_VSC) } as u16;
+            // O Windows devolve 0x54 (Alt+SysRq) para o PrintScreen, cujo scancode é E0 37.
+            // Localmente vale o virtual-key, mas a Área de Trabalho Remota repassa o scancode.
+            let scan = match v {
+                VK_SNAPSHOT => 0x37,
+                _ => unsafe { MapVirtualKeyW(v as u32, MAPVK_VK_TO_VSC) as u16 },
+            };
             (v as u16, scan, if ext { KEYEVENTF_EXTENDEDKEY } else { 0 })
         }
     };

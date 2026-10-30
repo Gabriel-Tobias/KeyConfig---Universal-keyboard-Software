@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/keyconfig-core", "crates/keyconfig-engine", "crates/keyconfig-config"]
 
 [workspace.package]
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 
 [profile.release]
