@@ -49,7 +49,9 @@ pub struct ConfigApp {
     /// Esperando o usuário apertar uma tecla física para selecioná-la; guarda a
     /// contagem de toques de quando a captura começou.
     capturing_since: Option<u64>,
-    brought_to_front: bool,
+    started: Instant,
+    /// Última tentativa de trazer a janela para a frente; `None` quando já deu certo.
+    focus_attempt: Option<Instant>,
     logo: Option<egui::TextureHandle>,
 }
 
@@ -79,7 +81,8 @@ impl ConfigApp {
             confirm_close: false,
             allow_close: false,
             capturing_since: None,
-            brought_to_front: false,
+            started: Instant::now(),
+            focus_attempt: Some(Instant::now() - Duration::from_secs(1)),
             logo,
         };
         capture::install(cc);
@@ -502,6 +505,30 @@ impl ConfigApp {
         });
     }
 
+    /// Aberto pelo ícone da bandeja, o Windows pode deixar a janela minimizada ou
+    /// atrás das outras. O eframe só mostra a janela depois dos primeiros quadros,
+    /// e pedir foco antes disso não tem efeito, então insiste por alguns segundos
+    /// até ela estar visível e ativa.
+    fn bring_to_front(&mut self, ctx: &egui::Context) {
+        let Some(last_try) = self.focus_attempt else { return };
+        let (focused, minimized) = ctx.input(|i| {
+            let v = i.viewport();
+            (v.focused.unwrap_or(false), v.minimized.unwrap_or(false))
+        });
+        if focused && !minimized || self.started.elapsed() > Duration::from_secs(4) {
+            self.focus_attempt = None;
+            return;
+        }
+        if last_try.elapsed() > Duration::from_millis(250) {
+            if minimized {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            self.focus_attempt = Some(Instant::now());
+        }
+        ctx.request_repaint_after(Duration::from_millis(100));
+    }
+
     fn status_toast(&self, ctx: &egui::Context) {
         let Some(status) = &self.status else { return };
         let age = status.at.elapsed().as_secs_f32();
@@ -578,12 +605,7 @@ impl ConfigApp {
 
 impl eframe::App for ConfigApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Aberto pelo ícone da bandeja, o Windows pode deixar a janela minimizada ou atrás das outras.
-        if !self.brought_to_front {
-            self.brought_to_front = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        }
+        self.bring_to_front(ctx);
 
         if let Err(e) = &self.store {
             let e = e.clone();

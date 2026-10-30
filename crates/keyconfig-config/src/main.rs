@@ -7,11 +7,17 @@ mod capture;
 mod editor;
 mod engine;
 mod keyboard;
+mod single_instance;
 mod theme;
 
 use eframe::egui;
 
 fn main() -> eframe::Result {
+    if !single_instance::acquire() {
+        single_instance::activate_existing();
+        return Ok(());
+    }
+
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("KeyConfig")
         .with_inner_size([1360.0, 900.0])

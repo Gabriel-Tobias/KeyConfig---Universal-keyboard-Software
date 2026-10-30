@@ -4,6 +4,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod autostart;
+mod configurator;
 mod elevation;
 mod hook;
 mod input;
@@ -25,7 +26,7 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AllowSetForegroundWindow, AppendMenuW, ChangeWindowMessageFilterEx, ASFW_ANY, CreatePopupMenu, MSGFLT_ALLOW, MF_DEFAULT, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
+    AppendMenuW, ChangeWindowMessageFilterEx, CreatePopupMenu, MSGFLT_ALLOW, MF_DEFAULT, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
     DispatchMessageW, GetCursorPos, GetMessageW, PostMessageW, PostQuitMessage, RegisterClassW,
     RegisterWindowMessageW, SetForegroundWindow, TrackPopupMenu, TranslateMessage, MF_CHECKED,
     MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, SW_SHOWNORMAL, TPM_NONOTIFY, TPM_RETURNCMD,
@@ -153,7 +154,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
     match msg {
         tray::WM_TRAY => {
             match (lparam & 0xFFFF) as u32 {
-                WM_LBUTTONUP => open_configurator(),
+                WM_LBUTTONUP => configurator::open(),
                 WM_RBUTTONUP | WM_CONTEXTMENU => show_menu(hwnd),
                 _ => {}
             }
@@ -255,7 +256,7 @@ unsafe fn show_menu(hwnd: HWND) {
     PostMessageW(hwnd, WM_NULL, 0, 0);
 
     match cmd {
-        ID_CONFIGURATOR => open_configurator(),
+        ID_CONFIGURATOR => configurator::open(),
         ID_RELOAD => reload_profile(true),
         ID_OPEN_FOLDER => open_config_folder(),
         ID_AUTOSTART => toggle_autostart(autostart_on, elevated),
@@ -296,20 +297,6 @@ fn toggle_autostart(currently_on: bool, elevated: bool) {
     }
 }
 
-fn open_configurator() {
-    // O clique no ícone dá ao motor o direito de trazer janelas para a frente; repassamos
-    // ao configurador, senão o Windows abre a janela dele atrás das outras.
-    unsafe { AllowSetForegroundWindow(ASFW_ANY) };
-    let path = std::env::current_exe().map(|exe| exe.with_file_name(ipc::CONFIG_EXE));
-    let launched = path.as_ref().is_ok_and(|p| std::process::Command::new(p).spawn().is_ok());
-    if !launched {
-        tray::notify(
-            Notice::Error,
-            APP,
-            &format!("Não encontrei o configurador ({}) na pasta do KeyConfig.", ipc::CONFIG_EXE),
-        );
-    }
-}
 
 fn open_config_folder() {
     match store::config_dir() {
