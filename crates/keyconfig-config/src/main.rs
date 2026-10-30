@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod capture;
 mod editor;
 mod engine;
 mod keyboard;

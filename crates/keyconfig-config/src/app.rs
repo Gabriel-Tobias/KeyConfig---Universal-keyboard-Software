@@ -6,7 +6,7 @@ use keyconfig_core::store::{Settings, Store};
 use keyconfig_core::{KeyCode, Language, Layout, Profile};
 
 use crate::editor::Editor;
-use crate::{engine, keyboard};
+use crate::{capture, engine, keyboard};
 
 const OK_COLOR: Color32 = Color32::from_rgb(0x5c, 0xd6, 0x7a);
 const ERROR_COLOR: Color32 = Color32::from_rgb(0xff, 0x6b, 0x6b);
@@ -45,6 +45,9 @@ pub struct ConfigApp {
     confirm_delete: bool,
     confirm_close: bool,
     allow_close: bool,
+    /// Esperando o usuário apertar uma tecla física para selecioná-la; guarda a
+    /// contagem de toques de quando a captura começou.
+    capturing_since: Option<u64>,
 }
 
 impl ConfigApp {
@@ -67,7 +70,9 @@ impl ConfigApp {
             confirm_delete: false,
             confirm_close: false,
             allow_close: false,
+            capturing_since: None,
         };
+        capture::install(&cc.egui_ctx);
         if let Err(e) = app.load() {
             app.store = Err(e);
         }
@@ -313,18 +318,58 @@ impl ConfigApp {
     fn keyboard_area(&mut self, ui: &mut egui::Ui) {
         let profile = &self.items[self.current].profile;
         let lang = profile.language;
+        let keys = capture::snapshot();
 
-        let height = ui.available_height() - 40.0;
+        if let Some(since) = self.capturing_since {
+            if keys.presses > since {
+                self.selected = keys.last;
+                self.capturing_since = None;
+            }
+        }
+
+        let height = ui.available_height() - 72.0;
         ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
             ui.add_space(12.0);
-            if let Some(key) = keyboard::show(ui, profile, self.selected) {
+            if let Some(key) = keyboard::show(ui, profile, self.selected, &keys.held) {
                 self.selected = Some(key);
+                self.capturing_since = None;
             }
         });
 
         // Teclas que não aparecem no desenho deste formato (F13+, mídia, numpad no 75%...).
         let visible: Vec<KeyCode> = geometry::keys(profile.layout, lang).iter().map(|k| k.code).collect();
         let hidden: Vec<KeyCode> = KeyCode::ALL.iter().copied().filter(|k| !visible.contains(k)).collect();
+
+        ui.horizontal(|ui| {
+            if self.capturing_since.is_some() {
+                if ui.button("Cancelar").clicked() {
+                    self.capturing_since = None;
+                }
+                ui.label(
+                    RichText::new("Aperte no seu teclado a tecla que você quer mapear...")
+                        .color(keyboard::ACCENT)
+                        .strong(),
+                );
+            } else {
+                if ui
+                    .button("Capturar tecla")
+                    .on_hover_text("Clique e aperte uma tecla no seu teclado para selecioná-la aqui.")
+                    .clicked()
+                {
+                    self.capturing_since = Some(keys.presses);
+                }
+                match keys.last {
+                    Some(k) => {
+                        let place = if hidden.contains(&k) { " (fora do desenho, está em Outras teclas)" } else { "" };
+                        ui.label(format!("Última tecla apertada: {}{place}", geometry::describe(k, lang)));
+                    }
+                    None => {
+                        ui.label(RichText::new("Aperte qualquer tecla para vê-la acender no desenho.").weak());
+                    }
+                }
+            }
+        });
+
         ui.horizontal(|ui| {
             ui.label("Outras teclas:");
             let text = match self.selected {

@@ -17,13 +17,23 @@ pub struct KeyRect {
 
 /// Teclas desenhadas para um formato e idioma.
 pub fn keys(layout: Layout, language: Language) -> Vec<KeyRect> {
+    build(layout, language).keys
+}
+
+/// Posição (`[x, y, w, h]`) das teclas Fn. Elas são tratadas pelo próprio teclado e
+/// nunca chegam ao Windows, então aparecem no desenho só como referência.
+pub fn fn_slots(layout: Layout, language: Language) -> Vec<[f32; 4]> {
+    build(layout, language).fn_slots
+}
+
+fn build(layout: Layout, language: Language) -> Builder {
     let iso = language == Language::PtBrAbnt2;
     let mut b = Builder::default();
     match layout {
         Layout::Compact40 => compact40(&mut b, iso),
         Layout::Compact60 => {
             alpha_block(&mut b, iso, 0.0, Escape60::Yes, 2.75);
-            bottom_row_full(&mut b, 4.0);
+            bottom_row_full(&mut b, 4.0, true);
         }
         Layout::Compact65 => {
             alpha_block(&mut b, iso, 0.0, Escape60::Yes, 1.75);
@@ -50,7 +60,7 @@ pub fn keys(layout: Layout, language: Language) -> Vec<KeyRect> {
             numpad(&mut b, iso, 18.5, 1.25, true);
         }
     }
-    b.keys
+    b
 }
 
 /// Rótulo curto impresso na tecla.
@@ -149,6 +159,7 @@ enum Escape60 {
 #[derive(Default)]
 struct Builder {
     keys: Vec<KeyRect>,
+    fn_slots: Vec<[f32; 4]>,
     x: f32,
     y: f32,
 }
@@ -171,6 +182,12 @@ impl Builder {
 
     fn sized(&mut self, code: KeyCode, w: f32, h: f32) -> &mut Self {
         self.keys.push(KeyRect { code, x: self.x, y: self.y, w, h, extra: None });
+        self.x += w;
+        self
+    }
+
+    fn fn_key(&mut self, w: f32) -> &mut Self {
+        self.fn_slots.push([self.x, self.y, w, 1.0]);
         self.x += w;
         self
     }
@@ -242,11 +259,18 @@ fn alpha_block(b: &mut Builder, iso: bool, y: f32, escape: Escape60, right_shift
     }
 }
 
-fn bottom_row_full(b: &mut Builder, y: f32) {
+/// Linha de baixo de 15u. No 60% o Win direito dá lugar ao Fn.
+fn bottom_row_full(b: &mut Builder, y: f32, with_fn: bool) {
     use KeyCode::*;
     b.at(0.0, y)
         .key(ControlLeft, 1.25).key(MetaLeft, 1.25).key(AltLeft, 1.25).key(Space, 6.25)
-        .key(AltRight, 1.25).key(MetaRight, 1.25).key(ContextMenu, 1.25).key(ControlRight, 1.25);
+        .key(AltRight, 1.25);
+    if with_fn {
+        b.fn_key(1.25);
+    } else {
+        b.key(MetaRight, 1.25);
+    }
+    b.key(ContextMenu, 1.25).key(ControlRight, 1.25);
 }
 
 /// Linha de baixo dos 65%/75%, com as setas encaixadas à direita.
@@ -254,7 +278,7 @@ fn bottom_row_compact(b: &mut Builder, y: f32) {
     use KeyCode::*;
     b.at(0.0, y)
         .key(ControlLeft, 1.25).key(MetaLeft, 1.25).key(AltLeft, 1.25).key(Space, 6.25)
-        .key(AltRight, 1.0).key(ContextMenu, 1.0).key(ControlRight, 1.0)
+        .key(AltRight, 1.0).fn_key(1.0).key(ControlRight, 1.0)
         .key(ArrowLeft, 1.0).key(ArrowDown, 1.0).key(ArrowRight, 1.0);
 }
 
@@ -267,7 +291,7 @@ fn tenkeyless(b: &mut Builder, iso: bool) {
     b.gap(0.25).keys(&[PrintScreen, ScrollLock, Pause], 1.0);
 
     alpha_block(b, iso, 1.25, Escape60::No, 2.75);
-    bottom_row_full(b, 5.25);
+    bottom_row_full(b, 5.25, false);
 
     b.at(15.25, 1.25).keys(&[Insert, Home, PageUp], 1.0);
     b.at(15.25, 2.25).keys(&[Delete, End, PageDown], 1.0);
@@ -317,7 +341,7 @@ fn compact96(b: &mut Builder, iso: bool) {
     b.at(14.25, 4.25).key(ArrowUp, 1.0);
     b.at(0.0, 5.25)
         .key(ControlLeft, 1.25).key(MetaLeft, 1.25).key(AltLeft, 1.25).key(Space, 6.25)
-        .key(AltRight, 1.0).key(ContextMenu, 1.0).key(ControlRight, 1.0)
+        .key(AltRight, 1.0).fn_key(1.0).key(ControlRight, 1.0)
         .gap(0.25).key(ArrowLeft, 1.0).key(ArrowDown, 1.0).key(ArrowRight, 1.0);
 
     numpad(b, iso, 15.5, 1.25, false);
@@ -337,8 +361,8 @@ fn compact40(b: &mut Builder, iso: bool) {
     b.keys(&BOTTOM_LETTERS, 1.0).key(Comma, 1.0).key(Period, 1.0);
     b.key(ShiftRight, if iso { 1.5 } else { 1.75 });
     b.at(0.0, 3.0)
-        .key(ControlLeft, 1.25).key(MetaLeft, 1.25).key(AltLeft, 1.25).key(Space, 6.25)
-        .key(AltRight, 1.25).key(ControlRight, 1.5);
+        .key(ControlLeft, 1.25).key(MetaLeft, 1.25).key(AltLeft, 1.25).key(Space, 5.25)
+        .key(AltRight, 1.25).fn_key(1.25).key(ControlRight, 1.25);
 }
 
 #[cfg(test)]
@@ -361,27 +385,27 @@ mod tests {
         }
     }
 
+    /// Todos os retângulos desenhados: teclas, a parte de baixo do Enter em "L" e os Fn.
+    fn all_rects(layout: Layout, language: Language) -> Vec<[f32; 4]> {
+        keys(layout, language)
+            .iter()
+            .flat_map(|k| std::iter::once([k.x, k.y, k.w, k.h]).chain(k.extra))
+            .chain(fn_slots(layout, language))
+            .collect()
+    }
+
     #[test]
     fn no_overlapping_keys() {
         fn overlaps(a: [f32; 4], b: [f32; 4]) -> bool {
             const E: f32 = 0.001;
             a[0] + a[2] > b[0] + E && b[0] + b[2] > a[0] + E && a[1] + a[3] > b[1] + E && b[1] + b[3] > a[1] + E
         }
-        fn rects(k: &KeyRect) -> Vec<[f32; 4]> {
-            let mut r = vec![[k.x, k.y, k.w, k.h]];
-            r.extend(k.extra);
-            r
-        }
         for layout in LAYOUTS {
             for language in LANGUAGES {
-                let all = keys(layout, language);
+                let all = all_rects(layout, language);
                 for (i, a) in all.iter().enumerate() {
                     for b in &all[i + 1..] {
-                        for ra in rects(a) {
-                            for rb in rects(b) {
-                                assert!(!overlaps(ra, rb), "{:?} e {:?} se sobrepõem em {layout:?}", a.code, b.code);
-                            }
-                        }
+                        assert!(!overlaps(*a, *b), "{a:?} e {b:?} se sobrepõem em {layout:?}/{language:?}");
                     }
                 }
             }
@@ -389,11 +413,19 @@ mod tests {
     }
 
     #[test]
+    fn compact_layouts_have_fn() {
+        for layout in [Layout::Compact40, Layout::Compact60, Layout::Compact65, Layout::Compact75, Layout::Compact96] {
+            assert_eq!(fn_slots(layout, Language::EnUs).len(), 1, "{layout:?}");
+        }
+        assert!(fn_slots(Layout::Full, Language::EnUs).is_empty());
+    }
+
+    #[test]
     fn compact40_rows_have_same_width() {
         for language in LANGUAGES {
-            let all = keys(Layout::Compact40, language);
+            let rects = all_rects(Layout::Compact40, language);
             for row in 0..4 {
-                let width: f32 = all.iter().filter(|k| k.y == row as f32).map(|k| k.w).sum();
+                let width: f32 = rects.iter().filter(|r| r[1] == row as f32).map(|r| r[2]).sum();
                 assert!((width - 12.75).abs() < 0.001, "linha {row} com {width}u em {language:?}");
             }
         }
@@ -402,11 +434,7 @@ mod tests {
     #[test]
     fn main_rows_are_15_units() {
         for language in LANGUAGES {
-            let all = keys(Layout::Compact60, language);
-            let rects: Vec<[f32; 4]> = all
-                .iter()
-                .flat_map(|k| std::iter::once([k.x, k.y, k.w, k.h]).chain(k.extra))
-                .collect();
+            let rects = all_rects(Layout::Compact60, language);
             for row in 0..5 {
                 let width: f32 = rects.iter().filter(|r| r[1] == row as f32).map(|r| r[2]).sum();
                 assert!((width - 15.0).abs() < 0.001, "linha {row} com {width}u em {language:?}");

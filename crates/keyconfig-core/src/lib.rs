@@ -7,7 +7,7 @@ pub mod keycode;
 pub mod profile;
 pub mod store;
 
-pub use keycode::{KeyCode, KeyOutput};
+pub use keycode::{KeyCode, KeyLookup, KeyOutput};
 pub use profile::{Action, Language, Layout, MacroStep, Profile};
 
 /// Nomes compartilhados entre o motor e o configurador.

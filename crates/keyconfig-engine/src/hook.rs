@@ -9,7 +9,7 @@ use std::cell::RefCell;
 use std::ptr::{null, null_mut};
 use std::sync::Arc;
 
-use keyconfig_core::{accent, Action, KeyCode, KeyOutput, Profile};
+use keyconfig_core::{accent, Action, KeyCode, KeyLookup, Profile};
 use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, GetKeyState};
@@ -56,46 +56,25 @@ struct Outcome {
 struct Engine {
     mappings: Vec<Option<Arc<Action>>>,
     held: Vec<Held>,
-    by_scan: [Option<KeyCode>; 512],
-    by_vk: [Option<KeyCode>; 256],
+    lookup: KeyLookup,
     /// Acento de uma tecla morta esperando a próxima letra.
     pending_accent: Option<char>,
 }
 
 impl Engine {
     fn new() -> Self {
-        let mut by_scan = [None; 512];
-        let mut by_vk = [None; 256];
-        for &key in KeyCode::ALL {
-            match key.output() {
-                KeyOutput::Scan(s) => by_scan[s as usize] = Some(key),
-                KeyOutput::Ext(s) => by_scan[0x100 | s as usize] = Some(key),
-                KeyOutput::Vk(v, _) => by_vk[v as usize] = Some(key),
-            }
-        }
         Engine {
             mappings: vec![None; KeyCode::ALL.len()],
             held: vec![Held::Up; KeyCode::ALL.len()],
-            by_scan,
-            by_vk,
+            lookup: KeyLookup::new(),
             pending_accent: None,
         }
     }
 
-    fn identify(&self, kb: &KBDLLHOOKSTRUCT) -> Option<KeyCode> {
-        if let Some(key) = self.by_vk.get(kb.vkCode as usize).copied().flatten() {
-            return Some(key);
-        }
-        // Scancodes acima de 0xFF são teclas "fantasma" (ex.: o Ctrl falso do AltGr).
-        if kb.scanCode > 0xFF {
-            return None;
-        }
-        let ext = if kb.flags & LLKHF_EXTENDED != 0 { 0x100 } else { 0 };
-        self.by_scan[ext | kb.scanCode as usize]
-    }
-
     fn decide(&mut self, kb: &KBDLLHOOKSTRUCT) -> Outcome {
-        let key = self.identify(kb);
+        let key = self
+            .lookup
+            .identify(kb.vkCode, kb.scanCode, kb.flags & LLKHF_EXTENDED != 0);
         let up = kb.flags & LLKHF_UP != 0;
         // Repetição automática de uma tecla segurada não consome o acento.
         let repeat = key.is_some_and(|k| !matches!(self.held[k.index()], Held::Up));

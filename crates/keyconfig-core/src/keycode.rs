@@ -92,6 +92,46 @@ impl KeyCode {
     }
 }
 
+/// Tabelas para descobrir qual tecla física gerou um evento do Windows.
+pub struct KeyLookup {
+    by_scan: [Option<KeyCode>; 512],
+    by_vk: [Option<KeyCode>; 256],
+}
+
+impl KeyLookup {
+    pub fn new() -> Self {
+        let mut by_scan = [None; 512];
+        let mut by_vk = [None; 256];
+        for &key in KeyCode::ALL {
+            match key.output() {
+                KeyOutput::Scan(s) => by_scan[s as usize] = Some(key),
+                KeyOutput::Ext(s) => by_scan[0x100 | s as usize] = Some(key),
+                KeyOutput::Vk(v, _) => by_vk[v as usize] = Some(key),
+            }
+        }
+        KeyLookup { by_scan, by_vk }
+    }
+
+    /// Identifica a tecla pelos dados do hook (`vkCode`, `scanCode` e a flag de estendida).
+    pub fn identify(&self, vk: u32, scan: u32, extended: bool) -> Option<KeyCode> {
+        if let Some(key) = self.by_vk.get(vk as usize).copied().flatten() {
+            return Some(key);
+        }
+        // Scancodes acima de 0xFF são teclas "fantasma" (ex.: o Ctrl falso do AltGr).
+        if scan > 0xFF {
+            return None;
+        }
+        let ext = if extended { 0x100 } else { 0 };
+        self.by_scan[ext | scan as usize]
+    }
+}
+
+impl Default for KeyLookup {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl fmt::Display for KeyCode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.name())
@@ -157,6 +197,20 @@ mod tests {
             };
             assert!(seen.insert(id), "saída duplicada em {key}");
         }
+    }
+
+    #[test]
+    fn lookup_identifies_every_key() {
+        let lookup = KeyLookup::new();
+        for &key in KeyCode::ALL {
+            let found = match key.output() {
+                KeyOutput::Scan(s) => lookup.identify(0, s as u32, false),
+                KeyOutput::Ext(s) => lookup.identify(0, s as u32, true),
+                KeyOutput::Vk(v, _) => lookup.identify(v as u32, 0, false),
+            };
+            assert_eq!(found, Some(key));
+        }
+        assert_eq!(lookup.identify(0xA2, 0x21D, false), None, "Ctrl falso do AltGr");
     }
 
     #[test]
