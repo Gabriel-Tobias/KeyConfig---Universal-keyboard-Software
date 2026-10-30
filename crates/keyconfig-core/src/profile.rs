@@ -33,6 +33,38 @@ pub enum Language {
     EnUsIntl,
 }
 
+impl Layout {
+    pub const ALL: [Layout; 5] = [
+        Layout::Compact60,
+        Layout::Compact65,
+        Layout::Compact75,
+        Layout::Tenkeyless,
+        Layout::Full,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Layout::Compact60 => "60%",
+            Layout::Compact65 => "65%",
+            Layout::Compact75 => "75%",
+            Layout::Tenkeyless => "TKL (80%)",
+            Layout::Full => "Completo (100%)",
+        }
+    }
+}
+
+impl Language {
+    pub const ALL: [Language; 3] = [Language::PtBrAbnt2, Language::EnUs, Language::EnUsIntl];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Language::PtBrAbnt2 => "Português (ABNT2)",
+            Language::EnUs => "Inglês (US)",
+            Language::EnUsIntl => "Inglês (US Internacional)",
+        }
+    }
+}
+
 /// O que acontece quando uma tecla mapeada é pressionada.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

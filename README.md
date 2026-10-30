@@ -8,8 +8,9 @@ Remapeamento universal para teclados genéricos no Windows.
 |---|---|
 | `crates/keyconfig-core` | Modelo de dados: teclas físicas, perfis e leitura/escrita em disco. Não depende do Windows. |
 | `crates/keyconfig-engine` | Motor (`keyconfig.exe`): fica na bandeja, intercepta o teclado com um hook global e aplica o perfil ativo. |
+| `crates/keyconfig-config` | Configurador (`keyconfig-config.exe`, egui): perfis, teclado clicável e editor de ações. Só fica aberto enquanto você edita. |
 
-O configurador (interface gráfica) virá depois. Ele só abre quando o usuário for editar os perfis.
+Clique esquerdo no ícone da bandeja abre o configurador; clique direito abre o menu. Ao salvar, o configurador avisa o motor, que recarrega o perfil na hora. Os dois `.exe` precisam ficar na mesma pasta.
 
 ## Compilar
 

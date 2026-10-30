@@ -16,7 +16,7 @@ use std::mem::zeroed;
 use std::ptr::{null, null_mut};
 use std::time::{Duration, Instant};
 
-use keyconfig_core::store;
+use keyconfig_core::{ipc, store};
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, LPARAM, LRESULT, POINT,
     WPARAM,
@@ -25,7 +25,7 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
+    AppendMenuW, ChangeWindowMessageFilterEx, CreatePopupMenu, MSGFLT_ALLOW, MF_DEFAULT, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
     DispatchMessageW, GetCursorPos, GetMessageW, PostMessageW, PostQuitMessage, RegisterClassW,
     RegisterWindowMessageW, SetForegroundWindow, TrackPopupMenu, TranslateMessage, MF_CHECKED,
     MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, SW_SHOWNORMAL, TPM_NONOTIFY, TPM_RETURNCMD,
@@ -42,11 +42,13 @@ const ID_OPEN_FOLDER: usize = 2;
 const ID_AUTOSTART: usize = 3;
 const ID_RUN_AS_ADMIN: usize = 4;
 const ID_EXIT: usize = 5;
+const ID_CONFIGURATOR: usize = 6;
 
 thread_local! {
     static ELEVATED: Cell<bool> = const { Cell::new(false) };
     static PROFILE_NAME: RefCell<String> = const { RefCell::new(String::new()) };
     static TASKBAR_CREATED: Cell<u32> = const { Cell::new(0) };
+    static RELOAD_REQUEST: Cell<u32> = const { Cell::new(0) };
 }
 
 fn main() {
@@ -112,7 +114,7 @@ fn single_instance(relaunched: bool) -> Option<HANDLE> {
 fn create_window() -> Result<HWND, String> {
     unsafe {
         let instance = GetModuleHandleW(null());
-        let class = wide("KeyConfigEngineWindow");
+        let class = wide(ipc::ENGINE_WINDOW_CLASS);
         let wc = WNDCLASSW {
             lpfnWndProc: Some(window_proc),
             hInstance: instance,
@@ -138,20 +140,29 @@ fn create_window() -> Result<HWND, String> {
             null(),
         );
         if hwnd.is_null() {
-            Err(std::io::Error::last_os_error().to_string())
-        } else {
-            Ok(hwnd)
+            return Err(std::io::Error::last_os_error().to_string());
         }
+
+        // Elevado, o Windows bloqueia mensagens vindas do configurador comum; liberamos só esta.
+        let reload = RegisterWindowMessageW(wide(ipc::RELOAD_MESSAGE).as_ptr());
+        RELOAD_REQUEST.set(reload);
+        ChangeWindowMessageFilterEx(hwnd, reload, MSGFLT_ALLOW, null_mut());
+        Ok(hwnd)
     }
 }
 
 unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         tray::WM_TRAY => {
-            let event = (lparam & 0xFFFF) as u32;
-            if matches!(event, WM_RBUTTONUP | WM_LBUTTONUP | WM_CONTEXTMENU) {
-                show_menu(hwnd);
+            match (lparam & 0xFFFF) as u32 {
+                WM_LBUTTONUP => open_configurator(),
+                WM_RBUTTONUP | WM_CONTEXTMENU => show_menu(hwnd),
+                _ => {}
             }
+            0
+        }
+        _ if msg != 0 && msg == RELOAD_REQUEST.get() => {
+            reload_profile(false);
             0
         }
         worker::WM_WORKER_ERROR => {
@@ -212,6 +223,7 @@ unsafe fn show_menu(hwnd: HWND) {
     let item = |flags, id, text: &str| {
         AppendMenuW(menu, flags, id, wide(text).as_ptr());
     };
+    item(MF_STRING | MF_DEFAULT, ID_CONFIGURATOR, "Abrir configurador");
     item(MF_STRING | MF_GRAYED, 0, &profile);
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     item(MF_STRING, ID_RELOAD, "Recarregar perfil");
@@ -245,6 +257,7 @@ unsafe fn show_menu(hwnd: HWND) {
     PostMessageW(hwnd, WM_NULL, 0, 0);
 
     match cmd {
+        ID_CONFIGURATOR => open_configurator(),
         ID_RELOAD => reload_profile(true),
         ID_OPEN_FOLDER => open_config_folder(),
         ID_AUTOSTART => toggle_autostart(autostart_on, elevated),
@@ -282,6 +295,18 @@ fn toggle_autostart(currently_on: bool, elevated: bool) {
              use \"Executar como administrador\" e ative esta opção de novo.",
         ),
         Err(e) => tray::notify(Notice::Error, "Não foi possível alterar a inicialização", &e),
+    }
+}
+
+fn open_configurator() {
+    let path = std::env::current_exe().map(|exe| exe.with_file_name(ipc::CONFIG_EXE));
+    let launched = path.as_ref().is_ok_and(|p| std::process::Command::new(p).spawn().is_ok());
+    if !launched {
+        tray::notify(
+            Notice::Error,
+            APP,
+            &format!("Não encontrei o configurador ({}) na pasta do KeyConfig.", ipc::CONFIG_EXE),
+        );
     }
 }
 
