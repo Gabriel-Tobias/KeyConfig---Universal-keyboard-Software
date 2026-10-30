@@ -25,6 +25,8 @@ pub fn summary(action: &Action, language: Language) -> String {
             .collect::<Vec<_>>()
             .join("+"),
         Action::Macro { .. } => "Macro".to_owned(),
+        // Um caractere só (ex.: "~") aparece na tecla em vez de "Texto".
+        Action::Text { text } if text.chars().count() == 1 => text.clone(),
         Action::Text { .. } => "Texto".to_owned(),
         Action::Run { .. } => "Abrir".to_owned(),
     }

@@ -20,6 +20,7 @@ pub fn keys(layout: Layout, language: Language) -> Vec<KeyRect> {
     let iso = language == Language::PtBrAbnt2;
     let mut b = Builder::default();
     match layout {
+        Layout::Compact40 => compact40(&mut b, iso),
         Layout::Compact60 => {
             alpha_block(&mut b, iso, 0.0, Escape60::Yes, 2.75);
             bottom_row_full(&mut b, 4.0);
@@ -33,10 +34,7 @@ pub fn keys(layout: Layout, language: Language) -> Vec<KeyRect> {
             bottom_row_compact(&mut b, 4.0);
         }
         Layout::Compact75 => {
-            b.at(0.0, 0.0).key(KeyCode::Escape, 1.0);
-            b.gap(0.25).keys(&[KeyCode::F1, KeyCode::F2, KeyCode::F3, KeyCode::F4], 1.0);
-            b.gap(0.25).keys(&[KeyCode::F5, KeyCode::F6, KeyCode::F7, KeyCode::F8], 1.0);
-            b.gap(0.25).keys(&[KeyCode::F9, KeyCode::F10, KeyCode::F11, KeyCode::F12], 1.0);
+            compact_function_row(&mut b);
             b.gap(0.25).key(KeyCode::PrintScreen, 1.0).key(KeyCode::Delete, 1.0);
             alpha_block(&mut b, iso, 1.25, Escape60::No, 1.75);
             b.at(15.0, 1.25).key(KeyCode::Home, 1.0);
@@ -46,9 +44,10 @@ pub fn keys(layout: Layout, language: Language) -> Vec<KeyRect> {
             bottom_row_compact(&mut b, 5.25);
         }
         Layout::Tenkeyless => tenkeyless(&mut b, iso),
+        Layout::Compact96 => compact96(&mut b, iso),
         Layout::Full => {
             tenkeyless(&mut b, iso);
-            numpad(&mut b, iso);
+            numpad(&mut b, iso, 18.5, 1.25, true);
         }
     }
     b.keys
@@ -276,20 +275,70 @@ fn tenkeyless(b: &mut Builder, iso: bool) {
     b.at(15.25, 5.25).keys(&[ArrowLeft, ArrowDown, ArrowRight], 1.0);
 }
 
-fn numpad(b: &mut Builder, iso: bool) {
+/// Teclado numérico com o canto superior esquerdo em (`x`, `y`). Nos 96% o 0 é
+/// estreito, porque a seta para a direita ocupa o lugar dele.
+fn numpad(b: &mut Builder, iso: bool, x: f32, y: f32, wide_zero: bool) {
     use KeyCode::*;
-    b.at(18.5, 1.25).keys(&[NumLock, NumpadDivide, NumpadMultiply, NumpadSubtract], 1.0);
-    b.at(18.5, 2.25).keys(&[Numpad7, Numpad8, Numpad9], 1.0);
+    b.at(x, y).keys(&[NumLock, NumpadDivide, NumpadMultiply, NumpadSubtract], 1.0);
+    b.at(x, y + 1.0).keys(&[Numpad7, Numpad8, Numpad9], 1.0);
     // No ABNT2 o + é menor para caber a tecla de ponto extra.
     if iso {
         b.key(NumpadAdd, 1.0);
-        b.at(18.5, 3.25).keys(&[Numpad4, Numpad5, Numpad6, NumpadComma], 1.0);
+        b.at(x, y + 2.0).keys(&[Numpad4, Numpad5, Numpad6, NumpadComma], 1.0);
     } else {
         b.sized(NumpadAdd, 1.0, 2.0);
-        b.at(18.5, 3.25).keys(&[Numpad4, Numpad5, Numpad6], 1.0);
+        b.at(x, y + 2.0).keys(&[Numpad4, Numpad5, Numpad6], 1.0);
     }
-    b.at(18.5, 4.25).keys(&[Numpad1, Numpad2, Numpad3], 1.0).sized(NumpadEnter, 1.0, 2.0);
-    b.at(18.5, 5.25).key(Numpad0, 2.0).key(NumpadDecimal, 1.0);
+    b.at(x, y + 3.0).keys(&[Numpad1, Numpad2, Numpad3], 1.0).sized(NumpadEnter, 1.0, 2.0);
+    if wide_zero {
+        b.at(x, y + 4.0).key(Numpad0, 2.0).key(NumpadDecimal, 1.0);
+    } else {
+        b.at(x + 1.0, y + 4.0).key(Numpad0, 1.0).key(NumpadDecimal, 1.0);
+    }
+}
+
+/// Esc e F1–F12 em blocos de 4, sem o espaço largo do TKL (75% e 96%).
+fn compact_function_row(b: &mut Builder) {
+    use KeyCode::*;
+    b.at(0.0, 0.0).key(Escape, 1.0);
+    b.gap(0.25).keys(&[F1, F2, F3, F4], 1.0);
+    b.gap(0.25).keys(&[F5, F6, F7, F8], 1.0);
+    b.gap(0.25).keys(&[F9, F10, F11, F12], 1.0);
+}
+
+/// 96% / "1800": numérico colado ao bloco principal e setas abaixo do Shift direito.
+fn compact96(b: &mut Builder, iso: bool) {
+    use KeyCode::*;
+    compact_function_row(b);
+    b.gap(0.25).key(Delete, 1.0);
+    b.at(15.5, 0.0).keys(&[Home, End, PageUp, PageDown], 1.0);
+
+    alpha_block(b, iso, 1.25, Escape60::No, 1.75);
+    b.at(14.25, 4.25).key(ArrowUp, 1.0);
+    b.at(0.0, 5.25)
+        .key(ControlLeft, 1.25).key(MetaLeft, 1.25).key(AltLeft, 1.25).key(Space, 6.25)
+        .key(AltRight, 1.0).key(ContextMenu, 1.0).key(ControlRight, 1.0)
+        .gap(0.25).key(ArrowLeft, 1.0).key(ArrowDown, 1.0).key(ArrowRight, 1.0);
+
+    numpad(b, iso, 15.5, 1.25, false);
+}
+
+/// 40%: só letras e a linha de baixo; números e F1–F12 ficam na camada Fn do teclado.
+fn compact40(b: &mut Builder, iso: bool) {
+    use KeyCode::*;
+    b.at(0.0, 0.0).key(Escape, 1.25).keys(&TOP_LETTERS, 1.0).key(Backspace, 1.5);
+    b.at(0.0, 1.0).key(CapsLock, 1.5).keys(&HOME_LETTERS, 1.0).key(Semicolon, 1.0).key(Enter, 1.25);
+    b.at(0.0, 2.0);
+    if iso {
+        b.key(ShiftLeft, 1.25).key(IntlBackslash, 1.0);
+    } else {
+        b.key(ShiftLeft, 2.0);
+    }
+    b.keys(&BOTTOM_LETTERS, 1.0).key(Comma, 1.0).key(Period, 1.0);
+    b.key(ShiftRight, if iso { 1.5 } else { 1.75 });
+    b.at(0.0, 3.0)
+        .key(ControlLeft, 1.25).key(MetaLeft, 1.25).key(AltLeft, 1.25).key(Space, 6.25)
+        .key(AltRight, 1.25).key(ControlRight, 1.5);
 }
 
 #[cfg(test)]
@@ -297,13 +346,7 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    const LAYOUTS: [Layout; 5] = [
-        Layout::Compact60,
-        Layout::Compact65,
-        Layout::Compact75,
-        Layout::Tenkeyless,
-        Layout::Full,
-    ];
+    const LAYOUTS: [Layout; 7] = Layout::ALL;
     const LANGUAGES: [Language; 3] = [Language::PtBrAbnt2, Language::EnUs, Language::EnUsIntl];
 
     #[test]
@@ -341,6 +384,17 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn compact40_rows_have_same_width() {
+        for language in LANGUAGES {
+            let all = keys(Layout::Compact40, language);
+            for row in 0..4 {
+                let width: f32 = all.iter().filter(|k| k.y == row as f32).map(|k| k.w).sum();
+                assert!((width - 12.75).abs() < 0.001, "linha {row} com {width}u em {language:?}");
             }
         }
     }

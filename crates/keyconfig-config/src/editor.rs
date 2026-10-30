@@ -38,6 +38,7 @@ impl Page {
             Some(Action::Key { to }) if MEDIA.contains(to) => Page::Media,
             Some(Action::Shortcut { .. }) => Page::Combination,
             Some(Action::Macro { .. }) => Page::Macro,
+            Some(Action::Text { text }) if CHARACTERS.contains(&text.as_str()) => Page::Keyboard,
             Some(Action::Text { .. }) => Page::Text,
             Some(Action::Run { .. }) => Page::Run,
             _ => Page::Keyboard,
@@ -69,6 +70,12 @@ const MODIFIERS: &[KeyCode] = &[
 const MEDIA: &[KeyCode] = &[
     MediaPlayPause, MediaStop, MediaTrackPrevious, MediaTrackNext, AudioVolumeMute,
     AudioVolumeDown, AudioVolumeUp,
+];
+
+/// Caracteres digitados direto (via Unicode), que saem iguais em qualquer idioma do Windows.
+const CHARACTERS: &[&str] = &[
+    "~", "^", "´", "`", "¨", "ç", "Ç", "ã", "õ", "ñ", "°", "ª", "º", "§", "€", "£", "¬", "¹", "²",
+    "³",
 ];
 
 /// Modificadores da aba Combinação, na ordem em que são apertados.
@@ -212,6 +219,14 @@ impl Editor {
                 ];
                 if let Some(to) = palette(ui, lang, &groups, current) {
                     profile.mappings.insert(key, Action::Key { to });
+                }
+                ui.add_space(8.0);
+                let current_text = match profile.mappings.get(&key) {
+                    Some(Action::Text { text }) => Some(text.as_str()),
+                    _ => None,
+                };
+                if let Some(c) = character_palette(ui, current_text) {
+                    profile.mappings.insert(key, Action::Text { text: c.to_owned() });
                 }
             }
             Page::Media => {
@@ -458,6 +473,31 @@ fn palette(
             ui.add_space(20.0);
         }
     });
+    picked
+}
+
+fn character_palette(ui: &mut egui::Ui, current: Option<&str>) -> Option<&'static str> {
+    let mut picked = None;
+    ui.label(RichText::new("Caracteres").strong().size(14.0))
+        .on_hover_text("Digitam o caractere direto, em qualquer idioma do Windows.");
+    ui.horizontal_wrapped(|ui| {
+        for &c in CHARACTERS {
+            let button = egui::Button::new(RichText::new(c).size(16.0))
+                .min_size(vec2(46.0, 28.0))
+                .selected(current == Some(c));
+            if ui.add(button).clicked() {
+                picked = Some(c);
+            }
+        }
+    });
+    ui.label(
+        RichText::new(
+            "Dica: para acentuar (~ + a = ã) use a tecla ~ em Comuns com o idioma ABNT2; \
+             estes botões digitam o caractere sozinho.",
+        )
+        .weak()
+        .small(),
+    );
     picked
 }
 

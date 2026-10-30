@@ -7,6 +7,8 @@ use crate::KeyCode;
 /// Formato físico do teclado. Por enquanto só informa o configurador quais teclas desenhar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Layout {
+    #[serde(rename = "40%")]
+    Compact40,
     #[serde(rename = "60%")]
     Compact60,
     #[serde(rename = "65%")]
@@ -15,6 +17,8 @@ pub enum Layout {
     Compact75,
     #[serde(rename = "tkl")]
     Tenkeyless,
+    #[serde(rename = "96%")]
+    Compact96,
     #[default]
     #[serde(rename = "100%")]
     Full,
@@ -34,20 +38,24 @@ pub enum Language {
 }
 
 impl Layout {
-    pub const ALL: [Layout; 5] = [
+    pub const ALL: [Layout; 7] = [
+        Layout::Compact40,
         Layout::Compact60,
         Layout::Compact65,
         Layout::Compact75,
         Layout::Tenkeyless,
+        Layout::Compact96,
         Layout::Full,
     ];
 
     pub fn label(self) -> &'static str {
         match self {
+            Layout::Compact40 => "40%",
             Layout::Compact60 => "60%",
             Layout::Compact65 => "65%",
             Layout::Compact75 => "75%",
             Layout::Tenkeyless => "TKL (80%)",
+            Layout::Compact96 => "96% (1800)",
             Layout::Full => "Completo (100%)",
         }
     }
