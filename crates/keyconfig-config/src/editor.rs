@@ -39,6 +39,7 @@ impl Page {
             Some(Action::Shortcut { .. }) => Page::Combination,
             Some(Action::Macro { .. }) => Page::Macro,
             Some(Action::Text { text }) if CHARACTERS.contains(&text.as_str()) => Page::Keyboard,
+            Some(Action::DeadKey { .. }) => Page::Keyboard,
             Some(Action::Text { .. }) => Page::Text,
             Some(Action::Run { .. }) => Page::Run,
             _ => Page::Keyboard,
@@ -74,8 +75,7 @@ const MEDIA: &[KeyCode] = &[
 
 /// Caracteres digitados direto (via Unicode), que saem iguais em qualquer idioma do Windows.
 const CHARACTERS: &[&str] = &[
-    "~", "^", "´", "`", "¨", "ç", "Ç", "ã", "õ", "ñ", "°", "ª", "º", "§", "€", "£", "¬", "¹", "²",
-    "³",
+    "ç", "Ç", "ã", "õ", "ñ", "°", "ª", "º", "§", "€", "£", "¬", "¹", "²", "³",
 ];
 
 /// Modificadores da aba Combinação, na ordem em que são apertados.
@@ -221,12 +221,8 @@ impl Editor {
                     profile.mappings.insert(key, Action::Key { to });
                 }
                 ui.add_space(8.0);
-                let current_text = match profile.mappings.get(&key) {
-                    Some(Action::Text { text }) => Some(text.as_str()),
-                    _ => None,
-                };
-                if let Some(c) = character_palette(ui, current_text) {
-                    profile.mappings.insert(key, Action::Text { text: c.to_owned() });
+                if let Some(action) = character_palette(ui, profile.mappings.get(&key)) {
+                    profile.mappings.insert(key, action);
                 }
             }
             Page::Media => {
@@ -476,28 +472,40 @@ fn palette(
     picked
 }
 
-fn character_palette(ui: &mut egui::Ui, current: Option<&str>) -> Option<&'static str> {
+/// Acentos (teclas mortas) e caracteres prontos; ambos funcionam em qualquer idioma do Windows.
+fn character_palette(ui: &mut egui::Ui, current: Option<&Action>) -> Option<Action> {
+    let button = |text: String, selected: bool| {
+        egui::Button::new(RichText::new(text).size(16.0))
+            .min_size(vec2(46.0, 28.0))
+            .selected(selected)
+    };
     let mut picked = None;
-    ui.label(RichText::new("Caracteres").strong().size(14.0))
-        .on_hover_text("Digitam o caractere direto, em qualquer idioma do Windows.");
-    ui.horizontal_wrapped(|ui| {
-        for &c in CHARACTERS {
-            let button = egui::Button::new(RichText::new(c).size(16.0))
-                .min_size(vec2(46.0, 28.0))
-                .selected(current == Some(c));
-            if ui.add(button).clicked() {
-                picked = Some(c);
-            }
-        }
+    ui.horizontal_top(|ui| {
+        ui.vertical(|ui| {
+            ui.label(RichText::new("Acentos").strong().size(14.0));
+            ui.horizontal(|ui| {
+                for accent in keyconfig_core::accent::ACCENTS {
+                    let selected = current == Some(&Action::DeadKey { accent });
+                    if ui.add(button(accent.to_string(), selected)).clicked() {
+                        picked = Some(Action::DeadKey { accent });
+                    }
+                }
+            });
+            ui.label(RichText::new("Combinam com a próxima letra: ~ + a = ã. Com espaço, sai o acento sozinho.").weak().small());
+        });
+        ui.add_space(24.0);
+        ui.vertical(|ui| {
+            ui.label(RichText::new("Caracteres").strong().size(14.0));
+            ui.horizontal_wrapped(|ui| {
+                for &c in CHARACTERS {
+                    let selected = matches!(current, Some(Action::Text { text }) if text == c);
+                    if ui.add(button(c.to_owned(), selected)).clicked() {
+                        picked = Some(Action::Text { text: c.to_owned() });
+                    }
+                }
+            });
+        });
     });
-    ui.label(
-        RichText::new(
-            "Dica: para acentuar (~ + a = ã) use a tecla ~ em Comuns com o idioma ABNT2; \
-             estes botões digitam o caractere sozinho.",
-        )
-        .weak()
-        .small(),
-    );
     picked
 }
 
@@ -523,6 +531,7 @@ fn describe_action(action: &Action, lang: Language) -> String {
         Action::Shortcut { .. } => format!("combinação {}", summary(action, lang)),
         Action::Macro { steps } => format!("macro com {} passo(s)", steps.len()),
         Action::Text { text } => format!("digita \"{}\"", text.lines().next().unwrap_or("")),
+        Action::DeadKey { accent } => format!("acento {accent} (combina com a próxima letra)"),
         Action::Run { command, .. } => format!("abre {command}"),
     }
 }

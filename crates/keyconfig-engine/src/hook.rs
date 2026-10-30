@@ -9,9 +9,10 @@ use std::cell::RefCell;
 use std::ptr::{null, null_mut};
 use std::sync::Arc;
 
-use keyconfig_core::{Action, KeyCode, KeyOutput, Profile};
+use keyconfig_core::{accent, Action, KeyCode, KeyOutput, Profile};
 use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, GetKeyState};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT,
     LLKHF_EXTENDED, LLKHF_INJECTED, LLKHF_UP, WH_KEYBOARD_LL,
@@ -20,6 +21,12 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 use crate::input::{self, INJECT_TAG};
 use crate::worker;
 
+const VK_SHIFT: i32 = 0x10;
+const VK_CONTROL: i32 = 0x11;
+const VK_MENU: i32 = 0x12;
+const VK_CAPITAL: i32 = 0x14;
+const VK_SPACE: u32 = 0x20;
+
 #[derive(Clone)]
 enum Held {
     Up,
@@ -27,12 +34,23 @@ enum Held {
     Passed,
     /// Foi pressionada com este mapeamento; a soltura usa o mesmo, mesmo que o perfil mude.
     Mapped(Arc<Action>),
+    /// Foi consumida por um acento (`~` + `a`); a soltura é descartada.
+    Swallowed,
 }
 
 enum Decision {
     Pass,
     Block,
     Act(Arc<Action>, bool),
+    /// Bloqueia a tecla e digita este caractere no lugar.
+    Type(char),
+}
+
+struct Outcome {
+    /// Acento pendente que não combinou com esta tecla e precisa ser digitado antes dela.
+    prefix: Option<char>,
+    key: Option<KeyCode>,
+    decision: Decision,
 }
 
 struct Engine {
@@ -40,6 +58,8 @@ struct Engine {
     held: Vec<Held>,
     by_scan: [Option<KeyCode>; 512],
     by_vk: [Option<KeyCode>; 256],
+    /// Acento de uma tecla morta esperando a próxima letra.
+    pending_accent: Option<char>,
 }
 
 impl Engine {
@@ -58,6 +78,7 @@ impl Engine {
             held: vec![Held::Up; KeyCode::ALL.len()],
             by_scan,
             by_vk,
+            pending_accent: None,
         }
     }
 
@@ -73,16 +94,40 @@ impl Engine {
         self.by_scan[ext | kb.scanCode as usize]
     }
 
-    fn decide(&mut self, kb: &KBDLLHOOKSTRUCT) -> Decision {
-        let Some(key) = self.identify(kb) else {
-            return Decision::Pass;
-        };
+    fn decide(&mut self, kb: &KBDLLHOOKSTRUCT) -> Outcome {
+        let key = self.identify(kb);
         let up = kb.flags & LLKHF_UP != 0;
-        let i = key.index();
+        // Repetição automática de uma tecla segurada não consome o acento.
+        let repeat = key.is_some_and(|k| !matches!(self.held[k.index()], Held::Up));
 
+        let mut prefix = None;
+        if !up && !repeat && !is_modifier(kb.vkCode) {
+            if let Some(accent) = self.pending_accent.take() {
+                match combine(accent, kb.vkCode) {
+                    Some(c) => {
+                        if let Some(k) = key {
+                            self.held[k.index()] = Held::Swallowed;
+                        }
+                        return Outcome { prefix: None, key, decision: Decision::Type(c) };
+                    }
+                    None => prefix = Some(accent),
+                }
+            }
+        }
+
+        let decision = match key {
+            Some(k) => self.decide_key(k, up),
+            None => Decision::Pass,
+        };
+        Outcome { prefix, key, decision }
+    }
+
+    fn decide_key(&mut self, key: KeyCode, up: bool) -> Decision {
+        let i = key.index();
         let action = if up {
             match std::mem::replace(&mut self.held[i], Held::Up) {
                 Held::Passed => return Decision::Pass,
+                Held::Swallowed => return Decision::Block,
                 Held::Mapped(action) => Some(action),
                 Held::Up => self.mappings[i].clone(),
             }
@@ -99,9 +144,36 @@ impl Engine {
 
         match action {
             None => Decision::Pass,
-            Some(action) => Decision::Act(action, up),
+            Some(action) => {
+                if let Action::DeadKey { accent } = *action {
+                    if !up {
+                        self.pending_accent = Some(accent);
+                    }
+                    return Decision::Block;
+                }
+                Decision::Act(action, up)
+            }
         }
     }
+}
+
+fn is_modifier(vk: u32) -> bool {
+    matches!(vk, 0x10..=0x12 | 0x14 | 0x5B | 0x5C | 0xA0..=0xA5)
+}
+
+/// Combina o acento com a tecla pela letra que ela gera no idioma atual do Windows.
+fn combine(accent: char, vk: u32) -> Option<char> {
+    let down = |vk: i32| unsafe { GetAsyncKeyState(vk) } < 0;
+    if vk == VK_SPACE {
+        return Some(accent);
+    }
+    if down(VK_CONTROL) || down(VK_MENU) || !(0x41..=0x5A).contains(&vk) {
+        return None;
+    }
+    let caps = unsafe { GetKeyState(VK_CAPITAL) } & 1 != 0;
+    let letter = char::from_u32(vk)?;
+    let base = if down(VK_SHIFT) != caps { letter } else { letter.to_ascii_lowercase() };
+    accent::compose(accent, base)
 }
 
 thread_local! {
@@ -115,6 +187,7 @@ pub fn set_profile(profile: &Profile) {
         for (&key, action) in &profile.mappings {
             engine.mappings[key.index()] = Some(Arc::new(action.clone()));
         }
+        engine.pending_accent = None;
     });
 }
 
@@ -142,12 +215,25 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         // Teclas injetadas (por nós ou por outros programas) passam direto.
         if kb.flags & LLKHF_INJECTED == 0 && kb.dwExtraInfo != INJECT_TAG {
             // O empréstimo termina antes do SendInput, que pode reentrar neste callback.
-            let decision = ENGINE.with_borrow_mut(|engine| engine.decide(kb));
-            match decision {
-                Decision::Pass => {}
+            let outcome = ENGINE.with_borrow_mut(|engine| engine.decide(kb));
+            if let Some(accent) = outcome.prefix {
+                type_char(accent);
+            }
+            match outcome.decision {
+                // Depois de digitar o acento, reenviamos a tecla para ela não chegar antes dele.
+                Decision::Pass => {
+                    if let (Some(_), Some(key)) = (outcome.prefix, outcome.key) {
+                        input::send(&[input::key(key, false)]);
+                        return 1;
+                    }
+                }
                 Decision::Block => return 1,
                 Decision::Act(action, up) => {
                     perform(action, up);
+                    return 1;
+                }
+                Decision::Type(c) => {
+                    type_char(c);
                     return 1;
                 }
             }
@@ -156,10 +242,16 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
     CallNextHookEx(null_mut(), code, wparam, lparam)
 }
 
+fn type_char(c: char) {
+    let mut inputs = Vec::with_capacity(4);
+    input::text(c.encode_utf8(&mut [0; 4]), &mut inputs);
+    input::send(&inputs);
+}
+
 fn perform(action: Arc<Action>, up: bool) {
     match &*action {
         Action::Key { to } => input::send(&[input::key(*to, up)]),
-        Action::Disabled => {}
+        Action::Disabled | Action::DeadKey { .. } => {}
         // Aperta na ordem e solta na ordem inversa, como uma pessoa faria.
         Action::Shortcut { keys } if up => {
             let inputs: Vec<_> = keys.iter().rev().map(|&k| input::key(k, true)).collect();

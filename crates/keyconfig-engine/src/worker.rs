@@ -64,7 +64,7 @@ fn run(action: &Action) -> Result<(), String> {
             input::send(&inputs);
         }
         Action::Run { command, args } => return run_command(command, args),
-        Action::Key { .. } | Action::Disabled | Action::Shortcut { .. } => {}
+        Action::Key { .. } | Action::Disabled | Action::Shortcut { .. } | Action::DeadKey { .. } => {}
     }
     Ok(())
 }

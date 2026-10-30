@@ -1,6 +1,7 @@
 //! Modelo de dados do KeyConfig: teclas físicas, perfis e armazenamento em disco.
 //! Não depende de Windows, então pode ser reutilizado pelo configurador.
 
+pub mod accent;
 pub mod geometry;
 pub mod keycode;
 pub mod profile;

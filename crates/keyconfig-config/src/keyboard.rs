@@ -28,6 +28,7 @@ pub fn summary(action: &Action, language: Language) -> String {
         // Um caractere só (ex.: "~") aparece na tecla em vez de "Texto".
         Action::Text { text } if text.chars().count() == 1 => text.clone(),
         Action::Text { .. } => "Texto".to_owned(),
+        Action::DeadKey { accent } => accent.to_string(),
         Action::Run { .. } => "Abrir".to_owned(),
     }
 }

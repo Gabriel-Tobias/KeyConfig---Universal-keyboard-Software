@@ -87,6 +87,8 @@ pub enum Action {
     Macro { steps: Vec<MacroStep> },
     /// Digita um texto, independente do idioma do teclado.
     Text { text: String },
+    /// Acento que se combina com a próxima letra (`~` + `a` = `ã`).
+    DeadKey { accent: char },
     /// Abre um programa, arquivo, pasta ou site.
     Run {
         command: String,
@@ -164,7 +166,8 @@ mod tests {
                     { "delay_ms": 50 }, { "text": "olá" }
                 ] },
                 "F15": { "type": "text", "text": "Atenciosamente,\nGabriel" },
-                "F16": { "type": "run", "command": "notepad.exe" }
+                "F16": { "type": "run", "command": "notepad.exe" },
+                "F17": { "type": "dead_key", "accent": "~" }
             }
         }"#;
         let profile: Profile = serde_json::from_str(json).unwrap();
@@ -188,6 +191,7 @@ mod tests {
             profile.mappings[&KeyCode::F16],
             Action::Run { command: "notepad.exe".into(), args: String::new() }
         );
+        assert_eq!(profile.mappings[&KeyCode::F17], Action::DeadKey { accent: '~' });
     }
 
     #[test]
