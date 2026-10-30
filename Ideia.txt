@@ -1,5 +1,0 @@
-1 a Ideia do app é criar um software universal para mapeamento de teclas de teclados genéricos
-2 o app deve ter a opção do usuario escolher o layout(60%, 75% e etc...)  e padrão de idioma que usa no teclado
-3 deve ser possível mapear as teclas com macros e varias funções
-4 o app deve ter a opção de criar varios perfis de configurações salvas
-5 ele deve iniciar junto com o Windows para ativar as configs do teclado
