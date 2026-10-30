@@ -27,10 +27,11 @@ use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, ChangeWindowMessageFilterEx, CreatePopupMenu, MSGFLT_ALLOW, MF_DEFAULT, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, GetCursorPos, GetMessageW, PostMessageW, PostQuitMessage, RegisterClassW,
-    RegisterWindowMessageW, SetForegroundWindow, TrackPopupMenu, TranslateMessage, MF_CHECKED,
-    MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, SW_SHOWNORMAL, TPM_NONOTIFY, TPM_RETURNCMD,
-    TPM_RIGHTBUTTON, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW,
+    DispatchMessageW, FindWindowW, GetCursorPos, GetMessageW, KillTimer, PostMessageW,
+    PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, SetTimer,
+    TrackPopupMenu, TranslateMessage, MF_CHECKED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG,
+    SW_SHOWNORMAL, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CONTEXTMENU, WM_DESTROY,
+    WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WM_TIMER, WNDCLASSW,
 };
 
 use crate::tray::Notice;
@@ -45,11 +46,14 @@ const ID_RUN_AS_ADMIN: usize = 4;
 const ID_EXIT: usize = 5;
 const ID_CONFIGURATOR: usize = 6;
 
+const TRAY_RETRY_TIMER: usize = 1;
+
 thread_local! {
     static ELEVATED: Cell<bool> = const { Cell::new(false) };
     static PROFILE_NAME: RefCell<String> = const { RefCell::new(String::new()) };
     static TASKBAR_CREATED: Cell<u32> = const { Cell::new(0) };
     static RELOAD_REQUEST: Cell<u32> = const { Cell::new(0) };
+    static SHOW_REQUEST: Cell<u32> = const { Cell::new(0) };
 }
 
 fn main() {
@@ -61,6 +65,10 @@ fn main() {
 
     let relaunched = std::env::args().any(|a| a == elevation::RELAUNCH_ARG);
     let Some(_instance) = single_instance(relaunched) else {
+        // A instância aberta mostra o ícone (pode ter falhado no logon) e avisa por balão.
+        if ask_running_instance_to_show() {
+            return;
+        }
         message_box(APP, tr("O KeyConfig já está rodando. Procure o ícone na bandeja do sistema.", "KeyConfig is already running. Look for its icon in the system tray.", "KeyConfig ya se está ejecutando. Busca su icono en la bandeja del sistema."), false);
         return;
     };
@@ -74,7 +82,9 @@ fn main() {
             return;
         }
     };
-    tray::create(hwnd, APP);
+    if !tray::create(hwnd, APP) {
+        unsafe { SetTimer(hwnd, TRAY_RETRY_TIMER, 2000, None) };
+    }
     worker::start(hwnd);
     reload_profile(false);
 
@@ -116,6 +126,18 @@ fn single_instance(relaunched: bool) -> Option<HANDLE> {
     }
 }
 
+/// Avisa a instância que já roda para mostrar o ícone. `false` se ela não foi encontrada.
+fn ask_running_instance_to_show() -> bool {
+    unsafe {
+        let hwnd = FindWindowW(wide(ipc::ENGINE_WINDOW_CLASS).as_ptr(), null());
+        if hwnd.is_null() {
+            return false;
+        }
+        let msg = RegisterWindowMessageW(wide(ipc::SHOW_MESSAGE).as_ptr());
+        PostMessageW(hwnd, msg, 0, 0) != 0
+    }
+}
+
 fn create_window() -> Result<HWND, String> {
     unsafe {
         let instance = GetModuleHandleW(null());
@@ -148,10 +170,15 @@ fn create_window() -> Result<HWND, String> {
             return Err(std::io::Error::last_os_error().to_string());
         }
 
-        // Elevado, o Windows bloqueia mensagens vindas do configurador comum; liberamos só esta.
+        // Elevado, o Windows bloqueia mensagens vindas de processos comuns (configurador,
+        // outra cópia do motor e o próprio Explorer); liberamos só estas.
         let reload = RegisterWindowMessageW(wide(ipc::RELOAD_MESSAGE).as_ptr());
         RELOAD_REQUEST.set(reload);
-        ChangeWindowMessageFilterEx(hwnd, reload, MSGFLT_ALLOW, null_mut());
+        let show = RegisterWindowMessageW(wide(ipc::SHOW_MESSAGE).as_ptr());
+        SHOW_REQUEST.set(show);
+        for msg in [reload, show, TASKBAR_CREATED.get()] {
+            ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW, null_mut());
+        }
         Ok(hwnd)
     }
 }
@@ -180,7 +207,27 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             0
         }
         _ if msg != 0 && msg == TASKBAR_CREATED.get() => {
-            tray::show();
+            if tray::show() {
+                KillTimer(hwnd, TRAY_RETRY_TIMER);
+            }
+            0
+        }
+        _ if msg != 0 && msg == SHOW_REQUEST.get() => {
+            if tray::show() {
+                KillTimer(hwnd, TRAY_RETRY_TIMER);
+            }
+            tray::notify(
+                Notice::Info,
+                APP,
+                tr("O KeyConfig já está rodando.", "KeyConfig is already running.", "KeyConfig ya se está ejecutando."),
+            );
+            0
+        }
+        WM_TIMER if wparam == TRAY_RETRY_TIMER => {
+            // No logon a bandeja pode demorar a aceitar ícones; tenta até conseguir.
+            if tray::show() {
+                KillTimer(hwnd, TRAY_RETRY_TIMER);
+            }
             0
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),

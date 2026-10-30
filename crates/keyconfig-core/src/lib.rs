@@ -18,6 +18,8 @@ pub mod ipc {
     pub const ENGINE_WINDOW_CLASS: &str = "KeyConfigEngineWindow";
     /// Mensagem registrada que pede ao motor para recarregar o perfil ativo.
     pub const RELOAD_MESSAGE: &str = "KeyConfig.Reload";
+    /// Mensagem registrada que pede ao motor para (re)mostrar o ícone da bandeja.
+    pub const SHOW_MESSAGE: &str = "KeyConfig.Show";
     /// Marca (`dwExtraInfo`) das teclas que o motor envia ("KCFG").
     pub const INJECT_TAG: usize = 0x4B43_4647;
     pub const ENGINE_EXE: &str = "keyconfig.exe";

@@ -31,7 +31,8 @@ thread_local! {
     static DATA: RefCell<Option<NOTIFYICONDATAW>> = const { RefCell::new(None) };
 }
 
-pub fn create(hwnd: HWND, tip: &str) {
+/// Retorna `false` se a bandeja ainda não aceitou o ícone (ex.: logo após o logon).
+pub fn create(hwnd: HWND, tip: &str) -> bool {
     let mut data: NOTIFYICONDATAW = unsafe { zeroed() };
     data.cbSize = size_of::<NOTIFYICONDATAW>() as u32;
     data.hWnd = hwnd;
@@ -40,15 +41,18 @@ pub fn create(hwnd: HWND, tip: &str) {
     data.hIcon = load_icon();
     copy_wide(&mut data.szTip, tip);
     DATA.set(Some(data));
-    show();
+    show()
 }
 
 /// Adiciona o ícone. Também é chamado quando o Explorer reinicia e some com ele.
-pub fn show() {
+/// Retorna `true` se o ícone está na bandeja (recém-adicionado ou já existente).
+pub fn show() -> bool {
+    let mut shown = false;
     with_data(|data| {
         data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-        unsafe { Shell_NotifyIconW(NIM_ADD, data) };
+        shown = unsafe { Shell_NotifyIconW(NIM_ADD, data) != 0 || Shell_NotifyIconW(NIM_MODIFY, data) != 0 };
     });
+    shown
 }
 
 pub fn set_tip(tip: &str) {
