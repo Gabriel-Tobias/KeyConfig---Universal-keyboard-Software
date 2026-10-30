@@ -369,39 +369,46 @@ impl ConfigApp {
     fn header(&mut self, ui: &mut egui::Ui) {
         let dirty = self.any_dirty();
         let mut save = false;
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(16.0, 10.0);
             let profile = &mut self.items[self.current].profile;
 
-            theme::field_label(ui, "Nome");
-            ui.add(
-                egui::TextEdit::singleline(&mut profile.name)
-                    .desired_width(180.0)
-                    .margin(Margin::symmetric(12.0, 9.0))
-                    .font(theme::medium(13.0)),
-            );
-            ui.add_space(8.0);
-            theme::field_label(ui, "Formato");
-            egui::ComboBox::from_id_salt("layout")
-                .width(130.0)
-                .selected_text(RichText::new(profile.layout.label()).font(theme::semibold(13.0)))
-                .show_ui(ui, |ui| {
-                    for layout in Layout::ALL {
-                        ui.selectable_value(&mut profile.layout, layout, layout.label());
-                    }
-                });
-            ui.add_space(8.0);
-            theme::field_label(ui, "Idioma");
-            egui::ComboBox::from_id_salt("language")
-                .width(220.0)
-                .selected_text(RichText::new(profile.language.label()).font(theme::semibold(13.0)))
-                .show_ui(ui, |ui| {
-                    for language in Language::ALL {
-                        ui.selectable_value(&mut profile.language, language, language.label());
-                    }
-                });
+            ui.horizontal(|ui| {
+                theme::field_label(ui, "Nome");
+                ui.add(
+                    egui::TextEdit::singleline(&mut profile.name)
+                        .desired_width(180.0)
+                        .margin(Margin::symmetric(12.0, 9.0))
+                        .font(theme::medium(13.0)),
+                );
+            });
+            theme::wrap_if(ui, 230.0);
+            ui.horizontal(|ui| {
+                theme::field_label(ui, "Formato");
+                egui::ComboBox::from_id_salt("layout")
+                    .width(130.0)
+                    .selected_text(RichText::new(profile.layout.label()).font(theme::semibold(13.0)))
+                    .show_ui(ui, |ui| {
+                        for layout in Layout::ALL {
+                            ui.selectable_value(&mut profile.layout, layout, layout.label());
+                        }
+                    });
+            });
+            theme::wrap_if(ui, 300.0);
+            ui.horizontal(|ui| {
+                theme::field_label(ui, "Idioma");
+                egui::ComboBox::from_id_salt("language")
+                    .width(220.0)
+                    .selected_text(RichText::new(profile.language.label()).font(theme::semibold(13.0)))
+                    .show_ui(ui, |ui| {
+                        for language in Language::ALL {
+                            ui.selectable_value(&mut profile.language, language, language.label());
+                        }
+                    });
+            });
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let needed = if dirty { 290.0 } else { 140.0 };
+            theme::trailing(ui, needed, |ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
                 save = theme::button_with(ui, Kind::Primary, None, "Salvar", Some("Ctrl+S"), dirty, 0.0).clicked();
                 if dirty {
@@ -444,8 +451,9 @@ impl ConfigApp {
 
         ui.horizontal(|ui| {
             ui.add_space(left);
-            ui.allocate_ui_with_layout(vec2(width, 36.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 14.0;
+            ui.allocate_ui(vec2(width, 36.0), |ui| ui.horizontal_wrapped(|ui| {
+                ui.set_max_width(width);
+                ui.spacing_mut().item_spacing = vec2(14.0, 10.0);
                 if self.capturing_since.is_some() {
                     if theme::button(ui, Kind::Primary, Some(icon::TARGET), "Cancelar captura", true).clicked() {
                         self.capturing_since = None;
@@ -459,12 +467,14 @@ impl ConfigApp {
                         self.capturing_since = Some(keys.presses);
                     }
                     if let Some(k) = keys.last {
+                        theme::wrap_if(ui, 200.0);
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 6.0;
                             ui.label(RichText::new("Última tecla").color(TEXT_DIM));
                             key_tag(ui, &geometry::describe(k, lang));
                         });
                     }
+                    theme::wrap_if(ui, 270.0);
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
                         theme::field_label(ui, "Outras teclas");
@@ -486,14 +496,14 @@ impl ConfigApp {
                     });
                 }
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                theme::trailing(ui, 400.0, |ui| {
                     ui.spacing_mut().item_spacing.x = 16.0;
                     legend(ui, "Apertada", Legend::Pressed);
                     legend(ui, "Desligada", Legend::Off);
                     legend(ui, "Selecionada", Legend::Selected);
                     legend(ui, "Remapeada", Legend::Remapped);
                 });
-            });
+            }));
         });
         ui.horizontal(|ui| {
             ui.add_space(left);

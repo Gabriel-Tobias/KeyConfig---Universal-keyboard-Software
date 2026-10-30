@@ -260,6 +260,35 @@ pub fn chip_toggle(ui: &mut egui::Ui, text: &str, extra: Option<&str>, on: bool)
     response
 }
 
+/// Grupo encostado à direita (os itens são adicionados da direita para a esquerda).
+/// Dentro de um `horizontal_wrapped`, se não couber na linha atual ele desce para
+/// a próxima em vez de ficar por cima do que veio antes.
+pub fn trailing(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui)) {
+    wrap_if(ui, width);
+    // Desconta o espaçamento que o layout põe antes do item, senão ele não cabe e quebra a linha.
+    let free = remaining_width(ui) - ui.spacing().item_spacing.x;
+    ui.allocate_ui_with_layout(
+        vec2(free.max(0.0), ui.spacing().interact_size.y),
+        egui::Layout::right_to_left(egui::Align::Center),
+        add,
+    );
+}
+
+/// Espaço que ainda sobra na linha atual. Em layouts com quebra de linha,
+/// `available_width()` devolve a largura inteira da linha, não o que sobra nela.
+fn remaining_width(ui: &egui::Ui) -> f32 {
+    ui.available_rect_before_wrap().width()
+}
+
+/// Dentro de um `horizontal_wrapped`, passa para a próxima linha se não couberem
+/// `width` pontos. Necessário para grupos (`ui.horizontal`), cuja largura o egui
+/// só conhece depois de desenhar.
+pub fn wrap_if(ui: &mut egui::Ui, width: f32) {
+    if remaining_width(ui) < width {
+        ui.end_row();
+    }
+}
+
 /// Rótulo à esquerda de um campo, como "Nome [___]".
 pub fn field_label(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).size(13.0).color(TEXT_DIM));

@@ -269,21 +269,24 @@ impl Editor {
 
         // Cabeçalho: tecla → o que ela faz, e as ações rápidas.
         section(ui, Margin::symmetric(20.0, 18.0), true, |ui| {
-            ui.horizontal(|ui| {
-                key_badge(ui, key, lang);
-                ui.add_space(4.0);
-                ui.label(RichText::new(icon::ARROW).font(theme::icon_font(14.0)).color(TEXT_FAINT));
-                ui.add_space(4.0);
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    let (text, color) = match profile.mappings.get(&key) {
-                        Some(action) => (describe_action(action, lang), ACCENT),
-                        None => ("Comportamento padrão".to_owned(), TEXT),
-                    };
-                    ui.label(RichText::new(text).font(theme::semibold(16.0)).color(color));
-                    ui.label(RichText::new("Escolha abaixo o que esta tecla deve fazer").size(12.0).color(TEXT_FAINT));
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(8.0, 12.0);
+                ui.horizontal(|ui| {
+                    key_badge(ui, key, lang);
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(icon::ARROW).font(theme::icon_font(14.0)).color(TEXT_FAINT));
+                    ui.add_space(4.0);
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        let (text, color) = match profile.mappings.get(&key) {
+                            Some(action) => (describe_action(action, lang), ACCENT),
+                            None => ("Comportamento padrão".to_owned(), TEXT),
+                        };
+                        ui.label(RichText::new(text).font(theme::semibold(16.0)).color(color));
+                        ui.label(RichText::new("Escolha abaixo o que esta tecla deve fazer").size(12.0).color(TEXT_FAINT));
+                    });
                 });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                theme::trailing(ui, 320.0, |ui| {
                     let mapped = profile.mappings.contains_key(&key);
                     if theme::button(ui, Kind::Ghost, Some(icon::RESET), "Restaurar padrão", mapped).clicked() {
                         profile.mappings.remove(&key);
